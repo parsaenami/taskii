@@ -9,6 +9,12 @@ Track today's tasks and appointments, see overdue items at a glance, run a Pomod
 
 ## Install
 
+**Homebrew** (macOS/Linux):
+
+```bash
+brew install parsaenami/tap/taskii
+```
+
 **Install with curl** (macOS/Linux):
 
 ```bash

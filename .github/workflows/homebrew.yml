@@ -1,0 +1,84 @@
+name: Update Homebrew tap
+
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+
+jobs:
+  update-formula:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine tag
+        id: tag
+        run: echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+        env:
+          GITHUB_REF_NAME: ${{ github.event.workflow_run.head_branch }}
+
+      - uses: actions/checkout@v4
+        with:
+          repository: parsaenami/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Compute checksums and version
+        id: vars
+        run: |
+          tag="${{ github.event.workflow_run.head_branch }}"
+          version="${tag#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          for asset in darwin-amd64 darwin-arm64 linux-amd64 linux-arm64; do
+            url="https://github.com/parsaenami/taskii/releases/download/${tag}/taskii-${asset}.tar.gz"
+            sha=$(curl -fsSL "$url" | sha256sum | awk '{print $1}')
+            echo "sha_${asset//-/_}=$sha" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Write formula
+        run: |
+          cat > tap/Formula/taskii.rb <<EOF
+          class Taskii < Formula
+            desc "Keyboard-driven task manager and dashboard for your terminal"
+            homepage "https://github.com/parsaenami/taskii"
+            version "${{ steps.vars.outputs.version }}"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/parsaenami/taskii/releases/download/${{ github.event.workflow_run.head_branch }}/taskii-darwin-arm64.tar.gz"
+                sha256 "${{ steps.vars.outputs.sha_darwin_arm64 }}"
+              else
+                url "https://github.com/parsaenami/taskii/releases/download/${{ github.event.workflow_run.head_branch }}/taskii-darwin-amd64.tar.gz"
+                sha256 "${{ steps.vars.outputs.sha_darwin_amd64 }}"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/parsaenami/taskii/releases/download/${{ github.event.workflow_run.head_branch }}/taskii-linux-arm64.tar.gz"
+                sha256 "${{ steps.vars.outputs.sha_linux_arm64 }}"
+              else
+                url "https://github.com/parsaenami/taskii/releases/download/${{ github.event.workflow_run.head_branch }}/taskii-linux-amd64.tar.gz"
+                sha256 "${{ steps.vars.outputs.sha_linux_amd64 }}"
+              end
+            end
+
+            def install
+              bin.install Dir["taskii-*"].first => "taskii"
+            end
+
+            test do
+              system "#{bin}/taskii", "--help"
+            end
+          end
+          EOF
+
+      - name: Commit and push
+        run: |
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/taskii.rb
+          git diff --cached --quiet && exit 0
+          git commit -m "Update taskii to ${{ steps.vars.outputs.version }}"
+          git push
