@@ -92,6 +92,13 @@ go vet ./...     # static checks
 gofmt -l .       # formatting check
 ```
 
+## Support
+
+If taskii is useful to you, consider supporting its development:
+
+- Inside Iran: [donito.me/parsaenami](https://donito.me/parsaenami)
+- Outside Iran: [buymeacoffee.com/parsaenami](https://buymeacoffee.com/parsaenami)
+
 ## License
 
 [MIT](LICENSE)
