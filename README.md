@@ -1,3 +1,5 @@
+<img src="docs/images/logo.png" alt="taskii logo" width="72">
+
 # taskii
 
 A fast, keyboard-driven task manager and dashboard for your terminal — built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
@@ -6,6 +8,13 @@ Track today's tasks and appointments, see overdue items at a glance, run a Pomod
 
 ![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go)
 ![License](https://img.shields.io/badge/license-MIT-blue)
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/screenshot-normal.png" alt="taskii normal mode"><p align="center"><em>Normal mode — Today, Overdue, Reports, Pomodoro, and Notes panes</em></p></td>
+<td width="50%"><img src="docs/images/screenshot-simple.png" alt="taskii simple mode"><p align="center"><em>Simple mode — one combined list of tasks, appointments, and notes</em></p></td>
+</tr>
+</table>
 
 ## Install
 
@@ -73,7 +82,7 @@ taskii --simple   # single-pane view: greeting + one combined list of tasks, ove
 | `L` | cycle layout |
 | `q` / `ctrl+c` | quit |
 
-On the Reports pane, `↑/↓` (or `h/l`) switch between the Week, Month, and Contribution charts instead of moving a selection.
+On the Reports pane, `←/→` (or `h/l`) switch between the Week, Month, and Contribution charts instead of moving a selection.
 
 ## Features
 
