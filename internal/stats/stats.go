@@ -4,7 +4,7 @@ import (
 	"sort"
 	"time"
 
-	"terminal-dashboard/internal/model"
+	"taskii/internal/model"
 )
 
 const dateFormat = "2006-01-02"
@@ -30,12 +30,27 @@ type HeatmapCell struct {
 	Level int
 }
 
+// DayBar is one column of the daily bar chart: the day's full task count and
+// how many of them were completed. Done <= Total always, so a renderer can
+// draw one bar Total high and fill the bottom Done of it.
+type DayBar struct {
+	Date  time.Time
+	Done  int
+	Total int
+}
+
 type Report struct {
 	Today   Progress
 	Week    Progress
 	Month   Progress
 	Heatmap []HeatmapCell // chronological, oldest first, always a multiple of 7 (weeks x 7 days)
 	Streak  int
+
+	// WeekBars is the last 7 days (oldest first) including today; MonthBars
+	// is the current calendar month up to today. Both include days with no
+	// tasks, so the x-axis has no gaps.
+	WeekBars  []DayBar
+	MonthBars []DayBar
 }
 
 func dayKey(t time.Time) string {
@@ -73,12 +88,48 @@ func Compute(tasks []model.Task, now time.Time) Report {
 	})
 
 	return Report{
-		Today:   todayProg,
-		Week:    weekProg,
-		Month:   monthProg,
-		Heatmap: computeHeatmap(tasks, now, 14),
-		Streak:  computeStreak(tasks, now),
+		Today:     todayProg,
+		Week:      weekProg,
+		Month:     monthProg,
+		Heatmap:   computeHeatmap(tasks, now, 14),
+		Streak:    computeStreak(tasks, now),
+		WeekBars:  dayBars(tasks, weekStart, now),
+		MonthBars: dayBars(tasks, monthStart, now),
 	}
+}
+
+// dayBars builds one DayBar per calendar day from start to end inclusive,
+// including days with no tasks so the chart's x-axis has no gaps.
+func dayBars(tasks []model.Task, start, end time.Time) []DayBar {
+	type counts struct{ done, total int }
+	byDate := map[string]*counts{}
+	for _, t := range tasks {
+		c := byDate[t.Date]
+		if c == nil {
+			c = &counts{}
+			byDate[t.Date] = c
+		}
+		c.total++
+		if t.Done {
+			c.done++
+		}
+	}
+
+	// Normalise to midnight so the day count isn't skewed by the times of
+	// day in start/end.
+	d := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, start.Location())
+	last := time.Date(end.Year(), end.Month(), end.Day(), 0, 0, 0, 0, end.Location())
+
+	var out []DayBar
+	for !d.After(last) {
+		bar := DayBar{Date: d}
+		if c := byDate[dayKey(d)]; c != nil {
+			bar.Done, bar.Total = c.done, c.total
+		}
+		out = append(out, bar)
+		d = d.AddDate(0, 0, 1)
+	}
+	return out
 }
 
 // computeHeatmap returns weeks*7 days ending today, aligned so each week
@@ -140,48 +191,29 @@ func dateInRange(d, start, end string) bool {
 }
 
 // Streak definition: the number of consecutive days, walking backwards from
-// today, where every task scheduled for that day is Done and there is at
-// least one task that day. A day with zero tasks breaks the streak (it's
-// not a "free pass") except we allow today itself to be empty/incomplete
-// in progress without breaking a streak already earned through yesterday,
-// so the user isn't punished mid-day for not having finished yet.
+// today, on which AT LEAST ONE task was completed. A day with no completions
+// breaks it. Today is exempt from breaking a streak already earned through
+// yesterday — nothing done *yet* today shouldn't retroactively erase it — but
+// it only adds to the count once something is actually completed.
 func computeStreak(tasks []model.Task, now time.Time) int {
-	byDate := map[string][]model.Task{}
+	doneByDate := map[string]int{}
 	for _, t := range tasks {
-		byDate[t.Date] = append(byDate[t.Date], t)
-	}
-
-	dayComplete := func(date string) (complete bool, hasTasks bool) {
-		ts, ok := byDate[date]
-		if !ok || len(ts) == 0 {
-			return false, false
+		if t.Done {
+			doneByDate[t.Date]++
 		}
-		for _, t := range ts {
-			if !t.Done {
-				return false, true
-			}
-		}
-		return true, true
 	}
 
 	streak := 0
 	cursor := now
 
-	todayKey := dayKey(cursor)
-	if complete, hasTasks := dayComplete(todayKey); hasTasks && !complete {
-		// today started but not finished yet: don't break the streak,
-		// just don't count today; start counting from yesterday.
-	} else if hasTasks && complete {
+	if doneByDate[dayKey(cursor)] > 0 {
 		streak++
 	}
+	// Either way, start walking from yesterday: if today has a completion
+	// it's counted above; if not, today is skipped rather than breaking.
 	cursor = cursor.AddDate(0, 0, -1)
 
-	for {
-		key := dayKey(cursor)
-		complete, hasTasks := dayComplete(key)
-		if !hasTasks || !complete {
-			break
-		}
+	for doneByDate[dayKey(cursor)] > 0 {
 		streak++
 		cursor = cursor.AddDate(0, 0, -1)
 	}
