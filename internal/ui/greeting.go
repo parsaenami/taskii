@@ -24,6 +24,9 @@ var taskiiBanner = []string{
 // out of the right column the same way pomoContentLines does for Pomodoro.
 var greetingContentLines = len(taskiiBanner) + 3
 
+// Version is the app version, shown at the right of the greeting section.
+const Version = "1.0.0"
+
 // currentUsername resolves the OS user for the greeting pane. user.Current()
 // can fail in some sandboxed/containerized environments, so it falls back to
 // the USER/USERNAME env vars, and gives up gracefully (empty string) rather
@@ -100,28 +103,54 @@ func renderGreeting(now time.Time, username string, width, height int) string {
 	}
 
 	blankStyle := lipgloss.NewStyle().Background(colorPaneBg)
+
+	// Version rides on the date line rather than getting its own row (the
+	// greeting pane's height budget is fixed) and rather than being pinned
+	// to the right edge, which would have broken the horizontal centering
+	// the rest of this block relies on.
+	dateLine := statLabelStyle.Render(now.Format("Monday, January 2, 2006")) +
+		lipgloss.NewStyle().Foreground(colorMuted).Background(colorPaneBg).Render("  ·  v"+Version)
+
 	lines := append([]string{}, logoLines...)
 	lines = append(lines,
 		blankStyle.Render(""),
-		statLabelStyle.Render(now.Format("Monday, January 2, 2006")),
+		dateLine,
 		statLabelStyle.Render(greetLine),
 	)
 	if height > 0 && len(lines) > height {
 		lines = lines[len(lines)-height:]
 	}
 
-	// Pad each line to width manually rather than relying on the outer
-	// Width().Render() below to do it: every line here already carries its
-	// own ANSI styling (ending in its own reset), and lipgloss only pads a
-	// pre-styled string's start/end — it doesn't background-fill padding
-	// added after an embedded reset, leaving unbackgrounded gaps on every
-	// line shorter than width (same class of bug fixed in today.go/reports.go).
+	// Center horizontally, then vertically. Padding is applied by hand with a
+	// background-carrying style rather than via lipgloss's Align/Width: these
+	// lines already carry their own ANSI (each ending in its own reset), and
+	// re-rendering pre-styled content leaves the added padding unbackgrounded
+	// (same class of bug fixed in today.go/reports.go).
 	if width > 0 {
 		for i, l := range lines {
-			if pad := width - lipgloss.Width(l); pad > 0 {
-				lines[i] = l + blankStyle.Render(strings.Repeat(" ", pad))
+			if gap := width - lipgloss.Width(l); gap > 0 {
+				left := gap / 2
+				lines[i] = blankStyle.Render(strings.Repeat(" ", left)) + l +
+					blankStyle.Render(strings.Repeat(" ", gap-left))
 			}
 		}
+	}
+
+	// Vertical centering: split the leftover rows above and below. renderPane
+	// would otherwise pad only at the bottom, leaving the block top-aligned.
+	if height > len(lines) {
+		blankRow := blankStyle.Render(strings.Repeat(" ", max(width, 0)))
+		gap := height - len(lines)
+		top := gap / 2
+		padded := make([]string, 0, height)
+		for i := 0; i < top; i++ {
+			padded = append(padded, blankRow)
+		}
+		padded = append(padded, lines...)
+		for len(padded) < height {
+			padded = append(padded, blankRow)
+		}
+		lines = padded
 	}
 
 	return strings.Join(lines, "\n")

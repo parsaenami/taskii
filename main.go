@@ -7,14 +7,15 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"terminal-dashboard/internal/ui"
+	"taskii/internal/ui"
 )
 
 func main() {
 	mock := flag.Bool("mock", false, "run with generated sample data instead of loading/saving data/tasks.json")
+	simple := flag.Bool("simple", false, "run a single-pane view: greeting beside one combined list of tasks, overdue items and notes")
 	flag.Parse()
 
-	p := tea.NewProgram(ui.NewApp(ui.Options{Mock: *mock}), tea.WithAltScreen())
+	p := tea.NewProgram(ui.NewApp(ui.Options{Mock: *mock, Simple: *simple}), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)

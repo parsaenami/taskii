@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"terminal-dashboard/internal/model"
+	"taskii/internal/model"
 )
 
 // renderTaskList renders a scrollable viewport of tasks. visibleRows is the
@@ -32,7 +32,7 @@ func renderTaskList(tasks []model.Task, selected int, scrollOffset int, visibleR
 
 	var lines []string
 	for i := scrollOffset; i < end; i++ {
-		lines = append(lines, renderTaskLine(tasks[i], i == selected && focused, overdue, width))
+		lines = append(lines, renderTaskLine(tasks[i], i == selected && focused, overdue, width, colorPaneBg))
 	}
 
 	// Always emit the indicator line, blank when unneeded, so the list's
@@ -54,7 +54,7 @@ func renderTaskList(tasks []model.Task, selected int, scrollOffset int, visibleR
 	return strings.Join(lines, "\n")
 }
 
-func renderTaskLine(t model.Task, selected bool, overdue bool, width int) string {
+func renderTaskLine(t model.Task, selected bool, overdue bool, width int, surface lipgloss.Color) string {
 	openBracket, closeBracket := "[", "]"
 	if t.IsAppointment() {
 		openBracket, closeBracket = "{", "}"
@@ -88,7 +88,11 @@ func renderTaskLine(t model.Task, selected bool, overdue bool, width int) string
 		style = taskStyle
 	}
 
-	bg := colorPaneBg
+	// surface is the background this row sits on: the pane shade inside a
+	// bordered pane, or the page shade in simple mode, which has no panes.
+	// Every segment below is re-based onto it, since the shared styles
+	// (taskStyle, doneStyle, …) all bake in colorPaneBg.
+	bg := surface
 	if selected {
 		bg = colorPanel
 	}
