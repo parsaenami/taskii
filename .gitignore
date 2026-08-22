@@ -1,0 +1,5 @@
+/taskii
+/terminal-dashboard
+*.test
+/data/
+/dist/
