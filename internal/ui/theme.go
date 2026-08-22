@@ -72,7 +72,23 @@ var themes = []Theme{
 		AppTitleFg: "#241c1a", PaneBg: "#2a211e",
 		HeatmapRamp: [5]lipgloss.Color{"#2f2522", "#3d5a3d", "#4f8a4f", "#69b869", "#8bc34a"},
 	},
+	{
+		// Classic Monokai: warm near-black ground with the signature pink /
+		// green / cyan / orange accents. Accent is the cyan rather than the
+		// pink, so it stays distinct from Danger (pink-red) the way Ember
+		// keeps Accent and Warning apart.
+		Name: "Monokai", Bg: "#272822", Panel: "#3e3d32", Border: "#54544a",
+		BorderFocus: "#66d9ef", Text: "#f8f8f2", Muted: "#90907e", Accent: "#66d9ef",
+		Green: "#a6e22e", Warning: "#fd971f", Danger: "#f92672", Purple: "#ae81ff",
+		AppTitleFg: "#272822", PaneBg: "#2d2e27",
+		HeatmapRamp: [5]lipgloss.Color{"#3e3d32", "#4a5a2a", "#6b8a2f", "#8bb32e", "#a6e22e"},
+	},
 }
+
+// defaultThemeName is the theme used on first run, before any settings file
+// exists. Named rather than indexed so reordering `themes` can't silently
+// change the default.
+const defaultThemeName = "Ember"
 
 var themeIndex int
 
@@ -99,6 +115,20 @@ func setThemeByName(name string) {
 			return
 		}
 	}
+	setDefaultTheme()
+}
+
+// setDefaultTheme selects defaultThemeName, falling back to the first theme
+// only if that name somehow isn't present.
+func setDefaultTheme() {
+	for i, t := range themes {
+		if t.Name == defaultThemeName {
+			themeIndex = i
+			applyTheme(t)
+			return
+		}
+	}
+	themeIndex = 0
 	applyTheme(themes[0])
 }
 
@@ -118,6 +148,7 @@ var (
 	heatmapRamp      []lipgloss.Color
 
 	titleStyle       lipgloss.Style
+	paneTitleStyle   lipgloss.Style
 	appTitleStyle    lipgloss.Style
 	paneStyle        lipgloss.Style
 	paneFocusStyle   lipgloss.Style
@@ -138,10 +169,13 @@ var (
 	helpKeyStyle   lipgloss.Style
 	helpLabelStyle lipgloss.Style
 	helpSepStyle   lipgloss.Style
+
+	paneKeyStyle      lipgloss.Style
+	paneKeyLabelStyle lipgloss.Style
 )
 
 func init() {
-	applyTheme(themes[0])
+	setDefaultTheme()
 }
 
 func applyTheme(t Theme) {
@@ -164,6 +198,15 @@ func applyTheme(t Theme) {
 		Foreground(colorText).
 		Background(colorPanel).
 		Padding(0, 1)
+
+	// paneTitleStyle is for titles that sit ON a pane's top border rather
+	// than in a row inside it. It carries colorPaneBg (matching the border
+	// run it's spliced into, so the line reads continuously) and no padding
+	// — renderPane supplies the surrounding "─ " / " ─" itself.
+	paneTitleStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(colorText).
+		Background(colorPaneBg)
 
 	appTitleStyle = lipgloss.NewStyle().
 		Bold(true).
@@ -228,4 +271,11 @@ func applyTheme(t Theme) {
 	helpKeyStyle = lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Background(colorBg)
 	helpLabelStyle = lipgloss.NewStyle().Foreground(colorMuted).Background(colorBg)
 	helpSepStyle = lipgloss.NewStyle().Foreground(colorBorder).Background(colorBg)
+
+	// Pane-scoped variants of the two help styles, for key hints rendered
+	// INSIDE a bordered pane (the Pomodoro footer) rather than in the
+	// page-level bar — same look, but carrying colorPaneBg so they sit on
+	// the pane's surface instead of punching page background through it.
+	paneKeyStyle = lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Background(colorPaneBg)
+	paneKeyLabelStyle = lipgloss.NewStyle().Foreground(colorMuted).Background(colorPaneBg)
 }
