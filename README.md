@@ -9,6 +9,12 @@ Track today's tasks and appointments, see overdue items at a glance, run a Pomod
 
 ## Install
 
+**Install with curl** (macOS/Linux):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/parsaenami/taskii/main/install.sh | sh
+```
+
 **Download a binary** from the [releases page](https://github.com/parsaenami/taskii/releases) (macOS, Linux, Windows — amd64/arm64), then put it on your `PATH`.
 
 **Or build from source** (requires [Go](https://go.dev) 1.26+):
