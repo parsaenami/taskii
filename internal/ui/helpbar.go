@@ -37,7 +37,10 @@ func renderHelpBar(groups []helpGroup, width int) string {
 				entries = append(entries, helpLabelStyle.Render(k.label))
 				continue
 			}
-			entries = append(entries, helpKeyStyle.Render("["+k.key+"]")+" "+helpLabelStyle.Render(k.label))
+			// Space folded into the label's span rather than left raw between
+			// the two: a bare " " between styled segments is outside both and
+			// renders with the terminal's default background.
+			entries = append(entries, helpKeyStyle.Render("["+k.key+"]")+helpLabelStyle.Render(" "+k.label))
 		}
 	}
 
@@ -50,7 +53,14 @@ func renderHelpBar(groups []helpGroup, width int) string {
 	}
 
 	// Doesn't fit on one line: wrap entry-by-entry so no single "[key] label"
-	// pair ever splits across lines.
+	// pair ever splits across lines. Every emitted line is margin+lineText, so
+	// the margin has to come out of the budget here — comparing the bare
+	// candidate against width let each wrapped line run one cell long, which
+	// pushed the whole page one column past the terminal.
+	avail := width - lipgloss.Width(margin)
+	if avail < 1 {
+		avail = 1
+	}
 	var lineText string
 	var lines []string
 	for _, e := range entries {
@@ -58,7 +68,7 @@ func renderHelpBar(groups []helpGroup, width int) string {
 		if lineText != "" {
 			candidate = lineText + sep + e
 		}
-		if lineText != "" && lipgloss.Width(candidate) > width {
+		if lineText != "" && lipgloss.Width(candidate) > avail {
 			lines = append(lines, margin+lineText)
 			lineText = e
 			continue

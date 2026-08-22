@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"terminal-dashboard/internal/model"
+	"taskii/internal/model"
 )
 
 // mockTasks builds a realistic-looking task set for --mock: a mix of done
@@ -79,4 +79,24 @@ func dayStep(offset int) int {
 		return 2
 	}
 	return 1
+}
+
+// mockNotes gives the --mock board some content, including a deliberately
+// long note and a multi-line one so wrapping and scrolling are exercised.
+func mockNotes() []model.Note {
+	bodies := []string{
+		"Ask Sam about the staging deploy window",
+		"Refactor idea: pull the retry logic out of the client and into a\nsmall middleware so the timeout policy lives in one place",
+		"Book flights before prices jump",
+		"The migration script assumes UTC timestamps everywhere — double check the legacy rows before running it in production, several of them look like they were written with a local offset baked in",
+		"Standup moved to 10:15",
+	}
+	notes := make([]model.Note, 0, len(bodies))
+	for i, b := range bodies {
+		notes = append(notes, model.Note{
+			ID:   fmt.Sprintf("mock-note-%d", i),
+			Body: b,
+		})
+	}
+	return notes
 }
