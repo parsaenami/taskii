@@ -706,3 +706,11 @@ height.
 Verified by sweep over 4 layouts x 6 themes x widths 70-200 x heights 24-50:
 `BAD_WIDTH=0 BAD_HEIGHT=0 GAP=0 INLINE=0` (INLINE asserts the key never shares
 a line with a weekday row).
+
+## Everforest theme (2026-08-23)
+
+Added Everforest to the built-in themes palette.
+
+- **Palette**: Warm, earthy forest ground (`Bg: #272e33`, `PaneBg: #2d353b`, `Panel: #343f44`, `Border: #475258`) paired with signature sage green (`Accent: #a7c080`, `BorderFocus: #a7c080`), warm cream text (`#d3c6aa`), muted grey-green (`#7a8478`), warm yellow (`Warning: #dbbc7f`), soft red (`Danger: #e67e80`), and soft purple (`Purple: #d699b6`).
+- **Surface layering & contrast**: Respects the `Bg < PaneBg < Panel < Border` luminance hierarchy. High contrast on headers (`AppTitleFg: #272e33` on `#a7c080` gives 6.88:1), crisp text readability (7.38:1 on pane bg), and a strictly monotonic 5-step heatmap ramp (`#343f44`, `#3d5248`, `#516f58`, `#78a06f`, `#a7c080`).
+
