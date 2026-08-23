@@ -35,6 +35,7 @@ const (
 	modeConfirmDelete
 	modeNoteEditing
 	modeConfirmClearNotes
+	modeThemePicker
 )
 
 const dateFormat = "2006-01-02"
@@ -79,6 +80,12 @@ type App struct {
 	simpleSelected int
 	simpleScroll   int
 	simpleNoteMode bool
+
+	themeFilter   textinput.Model
+	themeMatches  []Theme
+	themeCursor   int
+	themeScroll   int
+	themeOrigName string
 
 	input     textinput.Model
 	err       string
@@ -192,6 +199,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a.updateNoteEditing(msg)
 		case modeConfirmClearNotes:
 			return a.updateConfirmClearNotes(msg)
+		case modeThemePicker:
+			return a.updateThemePicker(msg)
 		}
 		return a.updateNormal(msg)
 	}
@@ -208,7 +217,11 @@ var expandedAllowedKeys = map[string]bool{
 	"a": true, "enter": true, "d": true, "C": true, "e": true,
 	"up": true, "k": true, "down": true, "j": true,
 	// App-wide.
-	"q": true, "ctrl+c": true, "t": true, "L": true,
+	"q": true, "ctrl+c": true, "t": true, "T": true, "alt+t": true, "L": true,
+}
+
+func isAltT(msg tea.KeyMsg) bool {
+	return msg.String() == "alt+t" || (msg.Alt && len(msg.Runes) > 0 && (msg.Runes[0] == 't' || msg.Runes[0] == 'T'))
 }
 
 // updateSimple is the whole key map for --simple: one list, one selection,
@@ -216,6 +229,11 @@ var expandedAllowedKeys = map[string]bool{
 // exist here, so their bindings (pomodoro, filters, focus switching, layout)
 // are simply absent rather than being gated off.
 func (a App) updateSimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if isAltT(msg) {
+		cmd := a.openThemePicker()
+		return a, cmd
+	}
+
 	entries := a.simpleEntries()
 
 	switch msg.String() {
@@ -276,6 +294,16 @@ func (a App) updateSimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.status = "Theme: " + name
 		a.saveSettings()
 		return a, nil
+
+	case "T":
+		name := cycleThemePrev()
+		a.status = "Theme: " + name
+		a.saveSettings()
+		return a, nil
+
+	case "alt+t":
+		cmd := a.openThemePicker()
+		return a, cmd
 	}
 	return a, nil
 }
@@ -388,6 +416,10 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if a.notesExpanded && !expandedAllowedKeys[msg.String()] {
 		return a, nil
+	}
+	if isAltT(msg) {
+		cmd := a.openThemePicker()
+		return a, cmd
 	}
 
 	switch msg.String() {
@@ -525,6 +557,16 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.status = "Theme: " + name
 		a.saveSettings()
 		return a, nil
+
+	case "T":
+		name := cycleThemePrev()
+		a.status = "Theme: " + name
+		a.saveSettings()
+		return a, nil
+
+	case "alt+t":
+		cmd := a.openThemePicker()
+		return a, cmd
 
 	case "L":
 		a.layout = a.layout.next()
@@ -1283,6 +1325,13 @@ func (a App) overdueTasks() []model.Task {
 }
 
 func (a App) helpGroups() []helpGroup {
+	if a.mode == modeThemePicker {
+		return []helpGroup{
+			{"", []helpKey{
+				{"↑/↓", "navigate"}, {"enter", "apply"}, {"esc", "cancel"},
+			}},
+		}
+	}
 	if a.simple && a.mode == modeNormal {
 		what := "task"
 		if a.simpleNoteMode {
@@ -1292,7 +1341,7 @@ func (a App) helpGroups() []helpGroup {
 			{"", []helpKey{
 				{"a", "add " + what}, {"tab", "switch to " + map[bool]string{true: "task", false: "note"}[a.simpleNoteMode]},
 				{"space/enter", "toggle/edit"}, {"d", "delete"}, {"i", "important"},
-				{"↑/↓ j/k", "navigate"}, {"t", "theme"}, {"q", "quit"},
+				{"↑/↓ j/k", "navigate"}, {"t/T", "theme"}, {"alt+t", "browse"}, {"q", "quit"},
 			}},
 		}
 	}
@@ -1335,7 +1384,7 @@ func (a App) helpGroups() []helpGroup {
 			{"Notes", notesKeys},
 			{"View", viewKeys},
 			{"App", []helpKey{
-				{"t", "theme"}, {"L", "layout"}, {"q", "quit"},
+				{"t/T", "theme"}, {"alt+t", "browse"}, {"L", "layout"}, {"q", "quit"},
 			}},
 		}
 	}
@@ -1348,7 +1397,7 @@ func (a App) helpGroups() []helpGroup {
 			}},
 			{"View", []helpKey{{"tab", "switch pane"}}},
 			{"App", []helpKey{
-				{"t", "theme"}, {"L", "layout"}, {"q", "quit"},
+				{"t/T", "theme"}, {"alt+t", "browse"}, {"L", "layout"}, {"q", "quit"},
 			}},
 		}
 	}
@@ -1371,7 +1420,7 @@ func (a App) helpGroups() []helpGroup {
 		// Pomodoro's keys aren't listed here — they're rendered inside the
 		// Pomodoro pane itself, next to the thing they control.
 		{"App", []helpKey{
-			{"t", "theme"}, {"L", "layout"}, {"q", "quit"},
+			{"t/T", "theme"}, {"alt+t", "browse"}, {"L", "layout"}, {"q", "quit"},
 		}},
 	}
 }
@@ -1460,133 +1509,107 @@ func (a App) View() string {
 		helpLine += strings.Repeat("\n", want-lipgloss.Height(helpLine))
 	}
 
+	var page string
 	if a.simple {
-		return a.assemblePage(a.renderSimple(), helpLine)
-	}
+		page = a.assemblePage(a.renderSimple(), helpLine)
+	} else {
+		g := a.geometry()
+		if a.notesExpanded && a.focus == focusNotes {
+			page = a.assemblePage(a.renderNotesPane(g), helpLine)
+		} else {
+			leftWidth := g.taskWidth
+			rightWidth := g.infoWidth
+			todayHeight := g.todayHeight
+			overdueHeight := g.overdueHeight
 
-	g := a.geometry()
+			filters := filterLabel(a.filterImportant, a.filterUndone)
 
-	// Expanded Notes replaces the whole body — no other pane is built, since
-	// geometry gave them all zero height.
-	if a.notesExpanded && a.focus == focusNotes {
-		return a.assemblePage(a.renderNotesPane(g), helpLine)
-	}
+			today := a.todayTasks()
+			todayVisible := a.visibleRowsFor(focusToday)
+			todayBody := renderTaskList(today, a.todaySelected, a.todayScroll, todayVisible, a.focus == focusToday, false, leftWidth-4)
+			if a.mode == modeAdding {
+				a.input.TextStyle = lipgloss.NewStyle().Foreground(colorText).Background(colorPaneBg)
+				a.input.PlaceholderStyle = lipgloss.NewStyle().Foreground(colorMuted).Background(colorPaneBg)
+				a.input.PromptStyle = lipgloss.NewStyle().Foreground(colorAccent).Background(colorPaneBg)
+				a.input.Cursor.Style = lipgloss.NewStyle().Foreground(colorText).Background(colorPaneBg)
 
-	leftWidth := g.taskWidth
-	rightWidth := g.infoWidth
-	todayHeight := g.todayHeight
-	overdueHeight := g.overdueHeight
+				if field := a.inputFieldWidth(); lipgloss.Width(a.input.Placeholder) > field {
+					a.input.Placeholder = fitToWidth(a.input.Placeholder, field)
+				}
 
-	filters := filterLabel(a.filterImportant, a.filterUndone)
+				a.input.Width = 0
+				inputLine := inputPromptStyle.Render("+ ") + a.input.View()
+				if pad := (leftWidth - 4) - lipgloss.Width(inputLine); pad > 0 {
+					inputLine += lipgloss.NewStyle().Background(colorPaneBg).Render(strings.Repeat(" ", pad))
+				}
+				todayBody += "\n" + inputLine
+			}
+			todayPane := renderPane(fmt.Sprintf("Today (%d)%s", len(today), filters), todayBody, a.focus == focusToday, leftWidth, todayHeight)
 
-	today := a.todayTasks()
-	todayVisible := a.visibleRowsFor(focusToday)
-	todayBody := renderTaskList(today, a.todaySelected, a.todayScroll, todayVisible, a.focus == focusToday, false, leftWidth-4)
-	if a.mode == modeAdding {
-		// Set here rather than once in NewApp so these follow theme changes.
-		a.input.TextStyle = lipgloss.NewStyle().Foreground(colorText).Background(colorPaneBg)
-		a.input.PlaceholderStyle = lipgloss.NewStyle().Foreground(colorMuted).Background(colorPaneBg)
-		a.input.PromptStyle = lipgloss.NewStyle().Foreground(colorAccent).Background(colorPaneBg)
-		a.input.Cursor.Style = lipgloss.NewStyle().Foreground(colorText).Background(colorPaneBg)
+			overdue := a.overdueTasks()
+			overdueWidth := leftWidth
+			overdueVisible := a.visibleRowsFor(focusOverdue)
+			overdueBody := renderTaskList(overdue, a.overdueSelected, a.overdueScroll, overdueVisible, a.focus == focusOverdue, true, overdueWidth-4)
+			overduePane := renderPane(fmt.Sprintf("Overdue (%d)%s", len(overdue), filters), overdueBody, a.focus == focusOverdue, overdueWidth, overdueHeight)
 
-		// Clip the placeholder to the field. The widget truncates a typed
-		// *value* to Width but never its placeholder, so on a narrow pane the
-		// full hint text ran past the border — and then vanished to a correct
-		// width on the first keystroke, reading as the line resizing as soon
-		// as you started typing.
-		if field := a.inputFieldWidth(); lipgloss.Width(a.input.Placeholder) > field {
-			a.input.Placeholder = fitToWidth(a.input.Placeholder, field)
+			tasks := lipgloss.JoinVertical(lipgloss.Left, todayPane, overduePane)
+			if a.layout == layoutStacked {
+				tasks = lipgloss.JoinHorizontal(lipgloss.Top, todayPane, overduePane)
+			}
+
+			greetWidth, reportsWidth, pomoWidth := rightWidth, rightWidth, rightWidth
+			if a.layout == layoutStacked {
+				pomoWidth = a.width - greetWidth - reportsWidth
+			}
+
+			greetBody := renderGreeting(a.now(), a.username, greetWidth-4, g.greetHeight-2)
+			greetPane := renderPane("", greetBody, false, greetWidth, g.greetHeight)
+
+			report := stats.Compute(a.tasks, a.now())
+			reportsBody := renderReports(report, reportsWidth-4, g.reportsHeight-2, a.reportChart, a.focus == focusReports)
+			reportsPane := renderPane("Reports", reportsBody, a.focus == focusReports, reportsWidth, g.reportsHeight)
+
+			pomoBody := renderPomodoro(a.pomo, pomoWidth-4, g.pomoHeight-2)
+			pomoPane := renderPane("Pomodoro", pomoBody, false, pomoWidth, g.pomoHeight)
+
+			notesPane := a.renderNotesPane(g)
+
+			if a.layout == layoutStacked && notesPane != "" {
+				tasks = lipgloss.JoinHorizontal(lipgloss.Top, tasks, notesPane)
+			}
+
+			infoPanes := []string{greetPane, reportsPane, pomoPane}
+			if a.layout != layoutStacked && a.layout != layoutThreeColumn && notesPane != "" {
+				infoPanes = append(infoPanes, notesPane)
+			}
+
+			gutter := gutterColumn(lipgloss.Height(tasks))
+
+			var body string
+			switch a.layout {
+			case layoutTasksRight:
+				info := lipgloss.JoinVertical(lipgloss.Left, infoPanes...)
+				body = lipgloss.JoinHorizontal(lipgloss.Top, info, gutter, tasks)
+			case layoutStacked:
+				info := lipgloss.JoinHorizontal(lipgloss.Top, greetPane, reportsPane, pomoPane)
+				body = lipgloss.JoinVertical(lipgloss.Left, info, tasks)
+			case layoutThreeColumn:
+				info := lipgloss.JoinVertical(lipgloss.Left, infoPanes...)
+				body = lipgloss.JoinHorizontal(lipgloss.Top, info, gutter, tasks, gutter, notesPane)
+			default:
+				info := lipgloss.JoinVertical(lipgloss.Left, infoPanes...)
+				body = lipgloss.JoinHorizontal(lipgloss.Top, tasks, gutter, info)
+			}
+
+			page = a.assemblePage(body, helpLine)
 		}
-
-		// Render with Width unset and do the trailing fill ourselves. The
-		// widget's own padding differs between its two branches — the
-		// placeholder path pads to Width while the typed path pads to Width
-		// and *then* appends a cursor cell past it — so letting it size the
-		// line made the row jump wider the moment a key was pressed. Its
-		// padding also goes through TextStyle, emerging wrapped in SGR
-		// codes that a TrimRight(" ") can't strip back off.
-		//
-		// Width still matters for horizontal scrolling of long values, but
-		// that's consumed in Update (handleOverflow), not here, so clearing
-		// it at render time costs nothing. View has a value receiver, so
-		// this only touches the local copy used for this frame.
-		a.input.Width = 0
-		inputLine := inputPromptStyle.Render("+ ") + a.input.View()
-		if pad := (leftWidth - 4) - lipgloss.Width(inputLine); pad > 0 {
-			inputLine += lipgloss.NewStyle().Background(colorPaneBg).Render(strings.Repeat(" ", pad))
-		}
-		todayBody += "\n" + inputLine
-	}
-	todayPane := renderPane(fmt.Sprintf("Today (%d)%s", len(today), filters), todayBody, a.focus == focusToday, leftWidth, todayHeight)
-
-	overdue := a.overdueTasks()
-	// In the stacked layout Today, Overdue and Notes share the row equally
-	// (geometry gives Notes the rounding remainder); in the column layouts
-	// Today and Overdue are stacked at the same width.
-	overdueWidth := leftWidth
-	overdueVisible := a.visibleRowsFor(focusOverdue)
-	overdueBody := renderTaskList(overdue, a.overdueSelected, a.overdueScroll, overdueVisible, a.focus == focusOverdue, true, overdueWidth-4)
-	overduePane := renderPane(fmt.Sprintf("Overdue (%d)%s", len(overdue), filters), overdueBody, a.focus == focusOverdue, overdueWidth, overdueHeight)
-
-	tasks := lipgloss.JoinVertical(lipgloss.Left, todayPane, overduePane)
-	if a.layout == layoutStacked {
-		tasks = lipgloss.JoinHorizontal(lipgloss.Top, todayPane, overduePane)
 	}
 
-	// In the stacked layout the three info panes sit side by side, so the
-	// last one absorbs the width remainder from the /3 split; in the column
-	// layouts they're all the same width and the remainder is zero.
-	greetWidth, reportsWidth, pomoWidth := rightWidth, rightWidth, rightWidth
-	if a.layout == layoutStacked {
-		pomoWidth = a.width - greetWidth - reportsWidth
+	if a.mode == modeThemePicker {
+		modal := a.renderThemePickerModal()
+		return overlayModal(page, modal, a.width, a.height)
 	}
-
-	greetBody := renderGreeting(a.now(), a.username, greetWidth-4, g.greetHeight-2)
-	greetPane := renderPane("", greetBody, false, greetWidth, g.greetHeight)
-
-	report := stats.Compute(a.tasks, a.now())
-	reportsBody := renderReports(report, reportsWidth-4, g.reportsHeight-2, a.reportChart, a.focus == focusReports)
-	reportsPane := renderPane("Reports", reportsBody, a.focus == focusReports, reportsWidth, g.reportsHeight)
-
-	pomoBody := renderPomodoro(a.pomo, pomoWidth-4, g.pomoHeight-2)
-	pomoPane := renderPane("Pomodoro", pomoBody, false, pomoWidth, g.pomoHeight)
-
-	notesPane := a.renderNotesPane(g)
-
-	// In the stacked layout Notes is a third task-row column; in the
-	// three-column layout it's a column of its own; otherwise it's the last
-	// pane of the info column.
-	if a.layout == layoutStacked && notesPane != "" {
-		tasks = lipgloss.JoinHorizontal(lipgloss.Top, tasks, notesPane)
-	}
-
-	infoPanes := []string{greetPane, reportsPane, pomoPane}
-	if a.layout != layoutStacked && a.layout != layoutThreeColumn && notesPane != "" {
-		infoPanes = append(infoPanes, notesPane)
-	}
-
-	// The gutter between columns is a styled space, not a bare one: an
-	// unstyled space here would be a column of terminal-default background
-	// running the full height of the page.
-	gutter := gutterColumn(lipgloss.Height(tasks))
-
-	var body string
-	switch a.layout {
-	case layoutTasksRight:
-		info := lipgloss.JoinVertical(lipgloss.Left, infoPanes...)
-		body = lipgloss.JoinHorizontal(lipgloss.Top, info, gutter, tasks)
-	case layoutStacked:
-		info := lipgloss.JoinHorizontal(lipgloss.Top, greetPane, reportsPane, pomoPane)
-		body = lipgloss.JoinVertical(lipgloss.Left, info, tasks)
-	case layoutThreeColumn:
-		info := lipgloss.JoinVertical(lipgloss.Left, infoPanes...)
-		body = lipgloss.JoinHorizontal(lipgloss.Top, info, gutter, tasks, gutter, notesPane)
-	default:
-		info := lipgloss.JoinVertical(lipgloss.Left, infoPanes...)
-		body = lipgloss.JoinHorizontal(lipgloss.Top, tasks, gutter, info)
-	}
-
-	return a.assemblePage(body, helpLine)
+	return page
 }
 
 // assemblePage stacks the body, the status/prompt line and the help bar into
@@ -1695,4 +1718,296 @@ func (a App) assemblePage(body, helpLine string) string {
 		padLines(indentLines(helpLine, 1)),
 	)
 	return full
+}
+
+func (a *App) openThemePicker() tea.Cmd {
+	a.mode = modeThemePicker
+	a.themeOrigName = currentTheme().Name
+	a.themeFilter = textinput.New()
+	a.themeFilter.Prompt = "Find: "
+	a.themeFilter.Placeholder = "type to filter (e.g. catppuccin, gruvbox, nord)..."
+	a.themeFilter.Focus()
+	a.themeFilter.TextStyle = lipgloss.NewStyle().Foreground(colorText).Background(colorPanel)
+	a.themeFilter.PromptStyle = lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Background(colorPanel)
+	a.themeFilter.PlaceholderStyle = lipgloss.NewStyle().Foreground(colorMuted).Background(colorPanel)
+	a.themeFilter.Cursor.Style = lipgloss.NewStyle().Foreground(colorAccent).Background(colorPanel)
+	a.filterThemes("")
+	return textinput.Blink
+}
+
+func (a *App) filterThemes(query string) {
+	q := strings.ToLower(strings.TrimSpace(query))
+	all := allAvailableThemes()
+	if q == "" {
+		a.themeMatches = all
+	} else {
+		var matches []Theme
+		for _, th := range all {
+			nameMatch := strings.Contains(strings.ToLower(th.Name), q)
+			sourceMatch := strings.Contains(strings.ToLower(string(th.Source)), q)
+			tintMatch := th.Source == SourceBubbletint && strings.Contains("tint", q)
+			curatedMatch := th.Source == SourceCurated && strings.Contains("curated", q)
+			customMatch := th.Source == SourceCustom && strings.Contains("custom", q)
+			if nameMatch || sourceMatch || tintMatch || curatedMatch || customMatch {
+				matches = append(matches, th)
+			}
+		}
+		a.themeMatches = matches
+	}
+	curr := currentTheme().Name
+	a.themeCursor = 0
+	for i, th := range a.themeMatches {
+		if strings.EqualFold(th.Name, curr) {
+			a.themeCursor = i
+			break
+		}
+	}
+	a.themeScroll = 0
+	a.syncThemePickerScroll()
+}
+
+func (a *App) syncThemePickerScroll() {
+	const visibleItems = 9
+	if a.themeCursor < a.themeScroll {
+		a.themeScroll = a.themeCursor
+	}
+	if a.themeCursor >= a.themeScroll+visibleItems {
+		a.themeScroll = a.themeCursor - visibleItems + 1
+	}
+	if a.themeScroll < 0 {
+		a.themeScroll = 0
+	}
+}
+
+func (a App) updateThemePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "ctrl+c":
+		setThemeByName(a.themeOrigName)
+		a.mode = modeNormal
+		return a, nil
+
+	case "enter":
+		if len(a.themeMatches) > 0 && a.themeCursor >= 0 && a.themeCursor < len(a.themeMatches) {
+			selected := a.themeMatches[a.themeCursor]
+			setThemeByName(selected.Name)
+			a.status = "Theme: " + selected.Name
+			a.saveSettings()
+		}
+		a.mode = modeNormal
+		return a, nil
+
+	case "up", "ctrl+p", "ctrl+k":
+		if len(a.themeMatches) > 0 {
+			a.themeCursor--
+			if a.themeCursor < 0 {
+				a.themeCursor = len(a.themeMatches) - 1
+			}
+			a.syncThemePickerScroll()
+			applyTheme(a.themeMatches[a.themeCursor])
+		}
+		return a, nil
+
+	case "down", "ctrl+n", "ctrl+j":
+		if len(a.themeMatches) > 0 {
+			a.themeCursor++
+			if a.themeCursor >= len(a.themeMatches) {
+				a.themeCursor = 0
+			}
+			a.syncThemePickerScroll()
+			applyTheme(a.themeMatches[a.themeCursor])
+		}
+		return a, nil
+	}
+
+	var cmd tea.Cmd
+	oldVal := a.themeFilter.Value()
+	a.themeFilter, cmd = a.themeFilter.Update(msg)
+	if a.themeFilter.Value() != oldVal {
+		a.filterThemes(a.themeFilter.Value())
+		if len(a.themeMatches) > 0 {
+			applyTheme(a.themeMatches[a.themeCursor])
+		}
+	}
+	return a, cmd
+}
+
+func (a App) renderThemePickerModal() string {
+	const (
+		modalWidth   = 56
+		visibleItems = 9
+	)
+
+	panelStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorBorderFocus).
+		Background(colorPanel).
+		Padding(0, 1)
+
+	// Available text width inside the padded, bordered box:
+	// modalWidth (56) - 2 (border left+right) - 2 (padding left+right) = 52.
+	innerW := modalWidth - 4
+	if innerW > a.width-6 {
+		innerW = a.width - 6
+	}
+	if innerW < 20 {
+		innerW = 20
+	}
+
+	countStr := fmt.Sprintf(" (%d themes)", len(a.themeMatches))
+	title := titleStyle.Render(" Theme Browser ") + statLabelStyle.Background(colorPanel).Render(countStr)
+	title = fitToWidth(title, innerW)
+
+	a.themeFilter.Width = innerW - 10
+	inputLine := a.themeFilter.View()
+	if pad := innerW - lipgloss.Width(inputLine); pad > 0 {
+		inputLine += lipgloss.NewStyle().Background(colorPanel).Render(strings.Repeat(" ", pad))
+	} else if pad < 0 {
+		inputLine = truncateANSI(inputLine, innerW)
+	}
+
+	sep := lipgloss.NewStyle().Foreground(colorBorder).Background(colorPanel).Render(strings.Repeat("─", innerW))
+
+	var itemLines []string
+	if len(a.themeMatches) == 0 {
+		itemLines = append(itemLines, statLabelStyle.Background(colorPanel).Render("  No matching themes found"))
+		for len(itemLines) < visibleItems {
+			itemLines = append(itemLines, lipgloss.NewStyle().Background(colorPanel).Render(strings.Repeat(" ", innerW)))
+		}
+	} else {
+		end := a.themeScroll + visibleItems
+		if end > len(a.themeMatches) {
+			end = len(a.themeMatches)
+		}
+		for i := a.themeScroll; i < end; i++ {
+			th := a.themeMatches[i]
+			isSel := i == a.themeCursor
+
+			prefix := "  "
+			if isSel {
+				prefix = "▸ "
+			}
+
+			var tagText string
+			var tagStyle lipgloss.Style
+			switch th.Source {
+			case SourceCurated:
+				tagText = "★ curated"
+				if isSel {
+					tagStyle = lipgloss.NewStyle().Foreground(colorAccent).Background(colorPanel).Bold(true)
+				} else {
+					tagStyle = lipgloss.NewStyle().Foreground(colorWarning).Background(colorPanel)
+				}
+			case SourceCustom:
+				tagText = "✦ custom"
+				if isSel {
+					tagStyle = lipgloss.NewStyle().Foreground(colorAccent).Background(colorPanel).Bold(true)
+				} else {
+					tagStyle = lipgloss.NewStyle().Foreground(colorGreen).Background(colorPanel)
+				}
+			default:
+				tagText = "⚙ tint"
+				if isSel {
+					tagStyle = lipgloss.NewStyle().Foreground(colorAccent).Background(colorPanel).Bold(true)
+				} else {
+					tagStyle = lipgloss.NewStyle().Foreground(colorMuted).Background(colorPanel)
+				}
+			}
+
+			tagStr := tagStyle.Render(tagText)
+			tagWidth := lipgloss.Width(tagStr)
+
+			nameAvail := innerW - len(prefix) - tagWidth - 1
+			if nameAvail < 5 {
+				nameAvail = 5
+			}
+			nameStr := th.Name
+			if lipgloss.Width(nameStr) > nameAvail {
+				nameStr = fitToWidth(nameStr, nameAvail)
+			}
+
+			nameStyle := lipgloss.NewStyle().Foreground(colorText).Background(colorPanel)
+			prefixStyle := lipgloss.NewStyle().Foreground(colorMuted).Background(colorPanel)
+			if isSel {
+				nameStyle = lipgloss.NewStyle().Foreground(colorAccent).Background(colorPanel).Bold(true)
+				prefixStyle = lipgloss.NewStyle().Foreground(colorAccent).Background(colorPanel).Bold(true)
+			}
+
+			rowLeft := prefixStyle.Render(prefix) + nameStyle.Render(nameStr)
+			gap := innerW - lipgloss.Width(rowLeft) - tagWidth
+			if gap < 1 {
+				gap = 1
+			}
+			rowLine := rowLeft + lipgloss.NewStyle().Background(colorPanel).Render(strings.Repeat(" ", gap)) + tagStr
+			if pad := innerW - lipgloss.Width(rowLine); pad > 0 {
+				rowLine += lipgloss.NewStyle().Background(colorPanel).Render(strings.Repeat(" ", pad))
+			} else if pad < 0 {
+				rowLine = truncateANSI(rowLine, innerW)
+			}
+			itemLines = append(itemLines, rowLine)
+		}
+		for len(itemLines) < visibleItems {
+			itemLines = append(itemLines, lipgloss.NewStyle().Background(colorPanel).Render(strings.Repeat(" ", innerW)))
+		}
+	}
+
+	footer := statLabelStyle.Background(colorPanel).Render("↑/↓ navigate · enter apply · esc cancel")
+	if pad := innerW - lipgloss.Width(footer); pad > 0 {
+		footer += lipgloss.NewStyle().Background(colorPanel).Render(strings.Repeat(" ", pad))
+	} else if pad < 0 {
+		footer = truncateANSI(footer, innerW)
+	}
+
+	var content []string
+	content = append(content, title)
+	content = append(content, inputLine)
+	content = append(content, sep)
+	content = append(content, itemLines...)
+	content = append(content, sep)
+	content = append(content, footer)
+
+	box := panelStyle.Render(strings.Join(content, "\n"))
+	return box
+}
+
+func overlayModal(bgPage, modal string, width, height int) string {
+	pageLines := strings.Split(bgPage, "\n")
+	modalLines := strings.Split(modal, "\n")
+
+	modalW := lipgloss.Width(modalLines[0])
+	modalH := len(modalLines)
+
+	startRow := (height - modalH) / 2
+	if startRow < 0 {
+		startRow = 0
+	}
+	startCol := (width - modalW) / 2
+	if startCol < 0 {
+		startCol = 0
+	}
+
+	pageBg := lipgloss.NewStyle().Background(colorBg)
+
+	for r, mLine := range modalLines {
+		targetRow := startRow + r
+		if targetRow >= len(pageLines) {
+			break
+		}
+		origLine := pageLines[targetRow]
+
+		left := truncateANSI(origLine, startCol)
+		if pad := startCol - lipgloss.Width(left); pad > 0 {
+			left += pageBg.Render(strings.Repeat(" ", pad))
+		}
+
+		rightCol := startCol + modalW
+		var right string
+		if rightCol < width {
+			pad := width - rightCol
+			right = pageBg.Render(strings.Repeat(" ", pad))
+		}
+
+		pageLines[targetRow] = left + mLine + right
+	}
+
+	return strings.Join(pageLines, "\n")
 }
