@@ -83,6 +83,16 @@ var themes = []Theme{
 		AppTitleFg: "#272822", PaneBg: "#2d2e27",
 		HeatmapRamp: [5]lipgloss.Color{"#3e3d32", "#4a5a2a", "#6b8a2f", "#8bb32e", "#a6e22e"},
 	},
+	{
+		// Everforest: warm, natural green-based theme with soft contrast.
+		// Accent is the signature sage green (#a7c080), with warm yellow warning
+		// and soft red danger accents on a dark earthy forest ground.
+		Name: "Everforest", Bg: "#272e33", Panel: "#343f44", Border: "#475258",
+		BorderFocus: "#a7c080", Text: "#d3c6aa", Muted: "#7a8478", Accent: "#a7c080",
+		Green: "#a7c080", Warning: "#dbbc7f", Danger: "#e67e80", Purple: "#d699b6",
+		AppTitleFg: "#272e33", PaneBg: "#2d353b",
+		HeatmapRamp: [5]lipgloss.Color{"#343f44", "#3d5248", "#516f58", "#78a06f", "#a7c080"},
+	},
 }
 
 // defaultThemeName is the theme used on first run, before any settings file
