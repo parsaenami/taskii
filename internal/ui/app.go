@@ -547,8 +547,7 @@ func (a App) updateAdding(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	case "enter":
 		a.addTask(a.input.Value())
-		a.mode = modeNormal
-		a.input.Blur()
+		a.input.SetValue("")
 		return a, nil
 	}
 
