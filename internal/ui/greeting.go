@@ -25,7 +25,7 @@ var taskiiBanner = []string{
 var greetingContentLines = len(taskiiBanner) + 3
 
 // Version is the app version, shown at the right of the greeting section.
-const Version = "1.0.0"
+const Version = "0.2.0"
 
 // currentUsername resolves the OS user for the greeting pane. user.Current()
 // can fail in some sandboxed/containerized environments, so it falls back to
