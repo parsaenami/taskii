@@ -91,7 +91,7 @@ On the Reports pane, `←/→` (or `h/l`) switch between the Week, Month, and Co
 - **Notes** — a simple multi-line notes board, expandable to full screen.
 - **Pomodoro timer** — start, pause, reset, and skip work/break phases.
 - **Reports** — completion progress, a 7-day/monthly bar chart, and a contribution heatmap.
-- **Themes** — six built-in color themes (Tokyo Night, Dracula, Nord, Light, Ember, Monokai), cycled with `t` and persisted between runs.
+- **Themes** — seven built-in color themes (Tokyo Night, Dracula, Nord, Light, Ember, Monokai, Everforest), cycled with `t` and persisted between runs.
 - **Layouts** — multiple pane arrangements, cycled with `L`.
 
 ## Development
