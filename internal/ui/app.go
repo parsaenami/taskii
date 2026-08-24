@@ -35,6 +35,7 @@ const (
 	modeConfirmDelete
 	modeNoteEditing
 	modeConfirmClearNotes
+	modeSettings
 )
 
 const dateFormat = "2006-01-02"
@@ -87,6 +88,8 @@ type App struct {
 
 	username string
 	layout   layout
+
+	settings settingsModal
 }
 
 // Options configures NewApp for non-default startup modes.
@@ -116,6 +119,7 @@ func NewApp(opts Options) App {
 	}
 
 	lay := layoutTasksLeft
+	pomo := newPomodoro()
 	if !opts.Mock {
 		settings, _ := model.LoadSettings()
 		if settings.Theme != "" {
@@ -124,6 +128,20 @@ func NewApp(opts Options) App {
 		if settings.Layout != "" {
 			lay = layoutByName(settings.Layout)
 		}
+		if settings.PomodoroFocusMinutes > 0 {
+			pomo.workMinutes = settings.PomodoroFocusMinutes
+		}
+		if settings.PomodoroShortBreakMinutes > 0 {
+			pomo.shortBreakMinutes = settings.PomodoroShortBreakMinutes
+		}
+		if settings.PomodoroLongBreakMinutes > 0 {
+			pomo.longBreakMinutes = settings.PomodoroLongBreakMinutes
+		}
+		if settings.PomodoroLongBreakEvery > 0 {
+			pomo.longBreakEvery = settings.PomodoroLongBreakEvery
+		}
+		pomo.autoStartNext = settings.PomodoroAutoStartNext
+		pomo.remaining = pomo.phaseDuration()
 	}
 
 	var notes []model.Note
@@ -158,7 +176,7 @@ func NewApp(opts Options) App {
 		noteEditIndex: -1,
 		simple:        opts.Simple,
 		err:           errMsg,
-		pomo:          newPomodoro(),
+		pomo:          pomo,
 		noPersist:     opts.Mock,
 		username:      currentUsername(),
 		layout:        lay,
@@ -192,6 +210,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a.updateNoteEditing(msg)
 		case modeConfirmClearNotes:
 			return a.updateConfirmClearNotes(msg)
+		case modeSettings:
+			return a.updateSettings(msg)
 		}
 		return a.updateNormal(msg)
 	}
@@ -208,7 +228,7 @@ var expandedAllowedKeys = map[string]bool{
 	"a": true, "enter": true, "d": true, "C": true, "e": true,
 	"up": true, "k": true, "down": true, "j": true,
 	// App-wide.
-	"q": true, "ctrl+c": true, "t": true, "L": true,
+	"q": true, "ctrl+c": true, "t": true, "S": true,
 }
 
 // updateSimple is the whole key map for --simple: one list, one selection,
@@ -275,6 +295,10 @@ func (a App) updateSimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		name := cycleTheme()
 		a.status = "Theme: " + name
 		a.saveSettings()
+		return a, nil
+
+	case "S":
+		a.openSettings()
 		return a, nil
 	}
 	return a, nil
@@ -526,13 +550,8 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.saveSettings()
 		return a, nil
 
-	case "L":
-		a.layout = a.layout.next()
-		a.status = "Layout: " + a.layout.String()
-		// Selections can fall outside the new viewport: the layouts differ in
-		// pane height, so a row visible in one may not exist in another.
-		a.clampSelections()
-		a.saveSettings()
+	case "S":
+		a.openSettings()
 		return a, nil
 	}
 
@@ -1091,8 +1110,13 @@ func (a App) saveSettings() {
 		return
 	}
 	_ = model.SaveSettings(model.Settings{
-		Theme:  currentTheme().Name,
-		Layout: a.layout.String(),
+		Theme:                     currentTheme().Name,
+		Layout:                    a.layout.String(),
+		PomodoroFocusMinutes:      a.pomo.workMinutes,
+		PomodoroShortBreakMinutes: a.pomo.shortBreakMinutes,
+		PomodoroLongBreakMinutes:  a.pomo.longBreakMinutes,
+		PomodoroLongBreakEvery:    a.pomo.longBreakEvery,
+		PomodoroAutoStartNext:     a.pomo.autoStartNext,
 	})
 }
 
@@ -1303,6 +1327,11 @@ func (a App) helpGroups() []helpGroup {
 	if a.mode == modeConfirmDelete || a.mode == modeConfirmClearNotes {
 		return nil
 	}
+	// The Settings modal draws its own key hints inside its box, same reason
+	// as the confirmation prompts above.
+	if a.mode == modeSettings {
+		return nil
+	}
 	if a.mode == modeNoteEditing {
 		return []helpGroup{
 			{"", []helpKey{
@@ -1334,7 +1363,7 @@ func (a App) helpGroups() []helpGroup {
 			{"Notes", notesKeys},
 			{"View", viewKeys},
 			{"App", []helpKey{
-				{"t", "theme"}, {"L", "layout"}, {"q", "quit"},
+				{"t", "theme"}, {"S", "settings"}, {"q", "quit"},
 			}},
 		}
 	}
@@ -1347,7 +1376,7 @@ func (a App) helpGroups() []helpGroup {
 			}},
 			{"View", []helpKey{{"tab", "switch pane"}}},
 			{"App", []helpKey{
-				{"t", "theme"}, {"L", "layout"}, {"q", "quit"},
+				{"t", "theme"}, {"S", "settings"}, {"q", "quit"},
 			}},
 		}
 	}
@@ -1370,7 +1399,7 @@ func (a App) helpGroups() []helpGroup {
 		// Pomodoro's keys aren't listed here — they're rendered inside the
 		// Pomodoro pane itself, next to the thing they control.
 		{"App", []helpKey{
-			{"t", "theme"}, {"L", "layout"}, {"q", "quit"},
+			{"t", "theme"}, {"S", "settings"}, {"q", "quit"},
 		}},
 	}
 }
@@ -1449,6 +1478,17 @@ func (a App) View() string {
 		return "loading..."
 	}
 
+	page := a.renderPage()
+	if a.mode == modeSettings {
+		return overlaySettingsModal(page, a.settings, a.width, a.height)
+	}
+	return page
+}
+
+// renderPage builds the full frame for every mode except modeSettings, which
+// composes its modal on top of this in View() instead of threading modal
+// state through the per-pane rendering below.
+func (a App) renderPage() string {
 	helpLine := renderHelpBar(a.helpGroups(), a.width)
 
 	// chromeLines reserves the help bar's NORMAL height so the panes don't
