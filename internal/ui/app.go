@@ -228,7 +228,7 @@ var expandedAllowedKeys = map[string]bool{
 	"a": true, "enter": true, "d": true, "C": true, "e": true,
 	"up": true, "k": true, "down": true, "j": true,
 	// App-wide.
-	"q": true, "ctrl+c": true, "t": true, "S": true,
+	"q": true, "ctrl+c": true, "t": true, "S": true, "L": true,
 }
 
 // updateSimple is the whole key map for --simple: one list, one selection,
@@ -552,6 +552,15 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "S":
 		a.openSettings()
+		return a, nil
+
+	case "L":
+		a.layout = a.layout.next()
+		a.status = "Layout: " + a.layout.String()
+		// Selections can fall outside the new viewport: the layouts differ in
+		// pane height, so a row visible in one may not exist in another.
+		a.clampSelections()
+		a.saveSettings()
 		return a, nil
 	}
 
@@ -1363,7 +1372,7 @@ func (a App) helpGroups() []helpGroup {
 			{"Notes", notesKeys},
 			{"View", viewKeys},
 			{"App", []helpKey{
-				{"t", "theme"}, {"S", "settings"}, {"q", "quit"},
+				{"t", "theme"}, {"S", "settings"}, {"L", "layout"}, {"q", "quit"},
 			}},
 		}
 	}
@@ -1376,7 +1385,7 @@ func (a App) helpGroups() []helpGroup {
 			}},
 			{"View", []helpKey{{"tab", "switch pane"}}},
 			{"App", []helpKey{
-				{"t", "theme"}, {"S", "settings"}, {"q", "quit"},
+				{"t", "theme"}, {"S", "settings"}, {"L", "layout"}, {"q", "quit"},
 			}},
 		}
 	}
@@ -1399,7 +1408,7 @@ func (a App) helpGroups() []helpGroup {
 		// Pomodoro's keys aren't listed here — they're rendered inside the
 		// Pomodoro pane itself, next to the thing they control.
 		{"App", []helpKey{
-			{"t", "theme"}, {"S", "settings"}, {"q", "quit"},
+			{"t", "theme"}, {"S", "settings"}, {"L", "layout"}, {"q", "quit"},
 		}},
 	}
 }

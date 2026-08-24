@@ -10,19 +10,17 @@ import (
 )
 
 // settingsFieldKind distinguishes how a field's value is edited and
-// displayed: a plain minute count, a session count, a yes/no toggle, or a
-// cycled enum (currently just layout).
+// displayed: a plain minute count, a session count, or a yes/no toggle.
 type settingsFieldKind int
 
 const (
 	settingsFieldMinutes settingsFieldKind = iota
 	settingsFieldCount
 	settingsFieldBool
-	settingsFieldLayout
 )
 
 // settingsField describes one editable row in the modal. min/max bound
-// left/right adjustment for the numeric kinds; layout wraps via layout.next().
+// left/right adjustment for the numeric kinds.
 type settingsField struct {
 	label string
 	kind  settingsFieldKind
@@ -36,7 +34,6 @@ var settingsFields = []settingsField{
 	{label: "Long break", kind: settingsFieldMinutes, min: 1, max: 120},
 	{label: "Sessions until long break", kind: settingsFieldCount, min: 1, max: 12},
 	{label: "Auto-start next session", kind: settingsFieldBool},
-	{label: "Layout", kind: settingsFieldLayout},
 }
 
 // settingsModal is a scratch copy of every setting it edits, so Esc can
@@ -50,7 +47,6 @@ type settingsModal struct {
 	longBreakMinutes  int
 	longBreakEvery    int
 	autoStartNext     bool
-	layout            layout
 }
 
 // openSettings enters modeSettings, seeding the modal from the live App
@@ -62,13 +58,12 @@ func (a *App) openSettings() {
 		longBreakMinutes:  a.pomo.longBreakMinutes,
 		longBreakEvery:    a.pomo.longBreakEvery,
 		autoStartNext:     a.pomo.autoStartNext,
-		layout:            a.layout,
 	}
 	a.mode = modeSettings
 }
 
-// applyAndClose commits the modal's scratch values back onto the App and
-// running Pomodoro, then persists and returns to normal mode. The Pomodoro's
+// applyAndClose commits the modal's scratch values back onto the running
+// Pomodoro, then persists and returns to normal mode. The Pomodoro's
 // remaining countdown is only rescaled when its OWN phase's duration
 // changed — editing the break lengths mid-focus-session shouldn't touch the
 // timer that's actually running.
@@ -85,9 +80,6 @@ func (a *App) applyAndClose() {
 	if newDuration := a.pomo.phaseDuration(); newDuration != oldPhaseDuration {
 		a.pomo.remaining = newDuration
 	}
-
-	a.layout = s.layout
-	a.clampSelections()
 
 	a.mode = modeNormal
 	a.status = "Settings saved"
@@ -139,16 +131,6 @@ func (m *settingsModal) adjust(delta int) {
 		m.longBreakEvery = clampInt(v, f.min, f.max)
 	case settingsFieldBool:
 		m.autoStartNext = !m.autoStartNext
-	case settingsFieldLayout:
-		if delta < 0 {
-			// layout only exposes next(); step backward by cycling forward
-			// through the rest of the list.
-			for i := 0; i < 3; i++ {
-				m.layout = m.layout.next()
-			}
-			return
-		}
-		m.layout = m.layout.next()
 	}
 }
 
@@ -198,8 +180,6 @@ func (m settingsModal) valueText(i int) string {
 			return "On"
 		}
 		return "Off"
-	case settingsFieldLayout:
-		return m.layout.String()
 	}
 	return ""
 }
