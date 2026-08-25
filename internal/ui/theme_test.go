@@ -91,11 +91,12 @@ func TestThemePickerFlow(t *testing.T) {
 	app.height = 30
 	app.now = func() time.Time { return time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC) }
 
-	// Open theme picker with 'T' (Shift+T)
+	// Open theme picker with 'T' (Shift+T) even when notes are expanded
+	app.notesExpanded = true
 	m, _ := app.updateNormal(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
 	a := m.(App)
 	if a.mode != modeThemePicker {
-		t.Fatalf("expected modeThemePicker, got %v", a.mode)
+		t.Fatalf("expected modeThemePicker when notes are expanded, got %v", a.mode)
 	}
 
 	// Filter themes by "gruv"
