@@ -91,8 +91,8 @@ func TestThemePickerFlow(t *testing.T) {
 	app.height = 30
 	app.now = func() time.Time { return time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC) }
 
-	// Open theme picker
-	m, _ := app.updateNormal(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}, Alt: true})
+	// Open theme picker with 'T' (Shift+T)
+	m, _ := app.updateNormal(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
 	a := m.(App)
 	if a.mode != modeThemePicker {
 		t.Fatalf("expected modeThemePicker, got %v", a.mode)

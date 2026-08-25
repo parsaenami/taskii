@@ -19,7 +19,6 @@ type keyMap struct {
 	PomodoroReset  key.Binding
 	PomodoroSkip   key.Binding
 	Theme          key.Binding
-	ThemePrev      key.Binding
 	ThemeBrowse    key.Binding
 }
 
@@ -86,12 +85,8 @@ var keys = keyMap{
 		key.WithKeys("t"),
 		key.WithHelp("t", "next theme"),
 	),
-	ThemePrev: key.NewBinding(
-		key.WithKeys("T"),
-		key.WithHelp("T", "prev theme"),
-	),
 	ThemeBrowse: key.NewBinding(
-		key.WithKeys("alt+t"),
-		key.WithHelp("alt+t", "browse themes"),
+		key.WithKeys("T", "shift+t"),
+		key.WithHelp("T", "browse themes"),
 	),
 }

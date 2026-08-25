@@ -78,8 +78,8 @@ taskii --simple   # single-pane view: greeting + one combined list of tasks, ove
 | `p` | start/pause Pomodoro |
 | `r` | reset Pomodoro phase |
 | `n` | skip Pomodoro phase |
-| `t` / `T` | next / previous curated color theme |
-| `alt+t` | open interactive theme browser (340+ themes, fuzzy search & live preview) |
+| `t` | cycle next curated color theme |
+| `T` / `shift+t` | open interactive theme browser (340+ themes, fuzzy search & live preview) |
 | `L` | cycle layout |
 | `q` / `ctrl+c` | quit |
 
@@ -91,7 +91,7 @@ On the Reports pane, `←/→` (or `h/l`) switch between the Week, Month, and Co
 - **Notes** — a simple multi-line notes board, expandable to full screen.
 - **Pomodoro timer** — start, pause, reset, and skip work/break phases.
 - **Reports** — completion progress, a 7-day/monthly bar chart, and a contribution heatmap.
-- **Themes** — 7 curated core themes cycled with `t`/`T`, 340+ terminal themes accessible via interactive fuzzy-search browser (`alt+t`), and extensible custom JSON/JSONL theme support.
+- **Themes** — 7 curated core themes cycled with `t`, 340+ terminal themes accessible via interactive fuzzy-search browser (`T` / `shift+t`), and extensible custom JSON/JSONL theme support.
 - **Layouts** — multiple pane arrangements, cycled with `L`.
 
 ## Custom Themes
