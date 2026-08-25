@@ -217,11 +217,7 @@ var expandedAllowedKeys = map[string]bool{
 	"a": true, "enter": true, "d": true, "C": true, "e": true,
 	"up": true, "k": true, "down": true, "j": true,
 	// App-wide.
-	"q": true, "ctrl+c": true, "t": true, "T": true, "alt+t": true, "L": true,
-}
-
-func isAltT(msg tea.KeyMsg) bool {
-	return msg.String() == "alt+t" || (msg.Alt && len(msg.Runes) > 0 && (msg.Runes[0] == 't' || msg.Runes[0] == 'T'))
+	"q": true, "ctrl+c": true, "t": true, "T": true, "shift+t": true, "L": true,
 }
 
 // updateSimple is the whole key map for --simple: one list, one selection,
@@ -229,11 +225,6 @@ func isAltT(msg tea.KeyMsg) bool {
 // exist here, so their bindings (pomodoro, filters, focus switching, layout)
 // are simply absent rather than being gated off.
 func (a App) updateSimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if isAltT(msg) {
-		cmd := a.openThemePicker()
-		return a, cmd
-	}
-
 	entries := a.simpleEntries()
 
 	switch msg.String() {
@@ -295,13 +286,7 @@ func (a App) updateSimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.saveSettings()
 		return a, nil
 
-	case "T":
-		name := cycleThemePrev()
-		a.status = "Theme: " + name
-		a.saveSettings()
-		return a, nil
-
-	case "alt+t":
+	case "T", "shift+t":
 		cmd := a.openThemePicker()
 		return a, cmd
 	}
@@ -416,10 +401,6 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if a.notesExpanded && !expandedAllowedKeys[msg.String()] {
 		return a, nil
-	}
-	if isAltT(msg) {
-		cmd := a.openThemePicker()
-		return a, cmd
 	}
 
 	switch msg.String() {
@@ -558,13 +539,7 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.saveSettings()
 		return a, nil
 
-	case "T":
-		name := cycleThemePrev()
-		a.status = "Theme: " + name
-		a.saveSettings()
-		return a, nil
-
-	case "alt+t":
+	case "T", "shift+t":
 		cmd := a.openThemePicker()
 		return a, cmd
 
@@ -1341,7 +1316,7 @@ func (a App) helpGroups() []helpGroup {
 			{"", []helpKey{
 				{"a", "add " + what}, {"tab", "switch to " + map[bool]string{true: "task", false: "note"}[a.simpleNoteMode]},
 				{"space/enter", "toggle/edit"}, {"d", "delete"}, {"i", "important"},
-				{"↑/↓ j/k", "navigate"}, {"t/T", "theme"}, {"alt+t", "browse"}, {"q", "quit"},
+				{"↑/↓ j/k", "navigate"}, {"t", "theme"}, {"T", "browse"}, {"q", "quit"},
 			}},
 		}
 	}
@@ -1384,7 +1359,7 @@ func (a App) helpGroups() []helpGroup {
 			{"Notes", notesKeys},
 			{"View", viewKeys},
 			{"App", []helpKey{
-				{"t/T", "theme"}, {"alt+t", "browse"}, {"L", "layout"}, {"q", "quit"},
+				{"t", "theme"}, {"T", "browse"}, {"L", "layout"}, {"q", "quit"},
 			}},
 		}
 	}
@@ -1397,7 +1372,7 @@ func (a App) helpGroups() []helpGroup {
 			}},
 			{"View", []helpKey{{"tab", "switch pane"}}},
 			{"App", []helpKey{
-				{"t/T", "theme"}, {"alt+t", "browse"}, {"L", "layout"}, {"q", "quit"},
+				{"t", "theme"}, {"T", "browse"}, {"L", "layout"}, {"q", "quit"},
 			}},
 		}
 	}
@@ -1420,7 +1395,7 @@ func (a App) helpGroups() []helpGroup {
 		// Pomodoro's keys aren't listed here — they're rendered inside the
 		// Pomodoro pane itself, next to the thing they control.
 		{"App", []helpKey{
-			{"t/T", "theme"}, {"alt+t", "browse"}, {"L", "layout"}, {"q", "quit"},
+			{"t", "theme"}, {"T", "browse"}, {"L", "layout"}, {"q", "quit"},
 		}},
 	}
 }
