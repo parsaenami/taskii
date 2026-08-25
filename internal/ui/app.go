@@ -1807,6 +1807,15 @@ func (a App) updateThemePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return a, cmd
 }
 
+func padPanelLine(s string, w int) string {
+	if pad := w - lipgloss.Width(s); pad > 0 {
+		return s + lipgloss.NewStyle().Background(colorPanel).Render(strings.Repeat(" ", pad))
+	} else if pad < 0 {
+		return truncateANSI(s, w)
+	}
+	return s
+}
+
 func (a App) renderThemePickerModal() string {
 	const (
 		modalWidth   = 56
@@ -1832,15 +1841,10 @@ func (a App) renderThemePickerModal() string {
 
 	countStr := fmt.Sprintf(" (%d themes)", len(a.themeMatches))
 	title := titleStyle.Render(" Theme Browser ") + statLabelStyle.Background(colorPanel).Render(countStr)
-	title = fitToWidth(title, innerW)
+	title = padPanelLine(title, innerW)
 
 	a.themeFilter.Width = innerW - 10
-	inputLine := a.themeFilter.View()
-	if pad := innerW - lipgloss.Width(inputLine); pad > 0 {
-		inputLine += lipgloss.NewStyle().Background(colorPanel).Render(strings.Repeat(" ", pad))
-	} else if pad < 0 {
-		inputLine = truncateANSI(inputLine, innerW)
-	}
+	inputLine := padPanelLine(a.themeFilter.View(), innerW)
 
 	sep := lipgloss.NewStyle().Foreground(colorBorder).Background(colorPanel).Render(strings.Repeat("─", innerW))
 
@@ -1914,12 +1918,7 @@ func (a App) renderThemePickerModal() string {
 			if gap < 1 {
 				gap = 1
 			}
-			rowLine := rowLeft + lipgloss.NewStyle().Background(colorPanel).Render(strings.Repeat(" ", gap)) + tagStr
-			if pad := innerW - lipgloss.Width(rowLine); pad > 0 {
-				rowLine += lipgloss.NewStyle().Background(colorPanel).Render(strings.Repeat(" ", pad))
-			} else if pad < 0 {
-				rowLine = truncateANSI(rowLine, innerW)
-			}
+			rowLine := padPanelLine(rowLeft+lipgloss.NewStyle().Background(colorPanel).Render(strings.Repeat(" ", gap))+tagStr, innerW)
 			itemLines = append(itemLines, rowLine)
 		}
 		for len(itemLines) < visibleItems {
@@ -1927,12 +1926,7 @@ func (a App) renderThemePickerModal() string {
 		}
 	}
 
-	footer := statLabelStyle.Background(colorPanel).Render("↑/↓ navigate · enter apply · esc cancel")
-	if pad := innerW - lipgloss.Width(footer); pad > 0 {
-		footer += lipgloss.NewStyle().Background(colorPanel).Render(strings.Repeat(" ", pad))
-	} else if pad < 0 {
-		footer = truncateANSI(footer, innerW)
-	}
+	footer := padPanelLine(statLabelStyle.Background(colorPanel).Render("↑/↓ navigate · enter apply · esc cancel"), innerW)
 
 	var content []string
 	content = append(content, title)
