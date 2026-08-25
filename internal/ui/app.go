@@ -1816,6 +1816,7 @@ func (a App) renderThemePickerModal() string {
 	panelStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(colorBorderFocus).
+		BorderBackground(colorPanel).
 		Background(colorPanel).
 		Padding(0, 1)
 
