@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"taskii/internal/model"
+	"github.com/parsaenami/taskii/internal/model"
 )
 
 // mockTasks builds a realistic-looking task set for --mock: a mix of done

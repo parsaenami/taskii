@@ -7,7 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"taskii/internal/stats"
+	"github.com/parsaenami/taskii/internal/stats"
 )
 
 // blockLevels gives sub-character-resolution fill via partial block glyphs,
