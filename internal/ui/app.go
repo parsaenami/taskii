@@ -399,6 +399,11 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if a.simple {
 		return a.updateSimple(msg)
 	}
+	switch msg.String() {
+	case "T", "shift+t":
+		cmd := a.openThemePicker()
+		return a, cmd
+	}
 	if a.notesExpanded && !expandedAllowedKeys[msg.String()] {
 		return a, nil
 	}
@@ -538,10 +543,6 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.status = "Theme: " + name
 		a.saveSettings()
 		return a, nil
-
-	case "T", "shift+t":
-		cmd := a.openThemePicker()
-		return a, cmd
 
 	case "L":
 		a.layout = a.layout.next()
