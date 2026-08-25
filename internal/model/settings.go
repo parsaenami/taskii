@@ -11,6 +11,15 @@ const settingsPath = "data/settings.json"
 type Settings struct {
 	Theme  string `json:"theme,omitempty"`
 	Layout string `json:"layout,omitempty"`
+
+	// Pomodoro durations are stored in minutes. Zero means "use the built-in
+	// default" — LoadSettings never fabricates them, so an old settings file
+	// without these fields keeps working.
+	PomodoroFocusMinutes      int  `json:"pomodoroFocusMinutes,omitempty"`
+	PomodoroShortBreakMinutes int  `json:"pomodoroShortBreakMinutes,omitempty"`
+	PomodoroLongBreakMinutes  int  `json:"pomodoroLongBreakMinutes,omitempty"`
+	PomodoroLongBreakEvery    int  `json:"pomodoroLongBreakEvery,omitempty"`
+	PomodoroAutoStartNext     bool `json:"pomodoroAutoStartNext,omitempty"`
 }
 
 func LoadSettings() (Settings, error) {

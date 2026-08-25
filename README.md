@@ -81,6 +81,7 @@ taskii --simple   # single-pane view: greeting + one combined list of tasks, ove
 | `t` | cycle next curated color theme |
 | `T` / `shift+t` | open interactive theme browser (340+ themes, fuzzy search & live preview) |
 | `L` | cycle layout |
+| `S` | open settings |
 | `q` / `ctrl+c` | quit |
 
 On the Reports pane, `←/→` (or `h/l`) switch between the Week, Month, and Contribution charts instead of moving a selection.

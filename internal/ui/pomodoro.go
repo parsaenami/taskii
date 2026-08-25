@@ -19,13 +19,14 @@ const (
 	phaseLongBreak
 )
 
+// Built-in defaults, used whenever a setting hasn't been customized. A full
+// cycle is work/break/work/break/work/long-break — three focus sessions, the
+// last of which earns the long break.
 const (
-	workDuration       = 25 * time.Minute
-	shortBreakDuration = 5 * time.Minute
-	longBreakDuration  = 15 * time.Minute
-	// A full cycle is work/break/work/break/work/long-break — three focus
-	// sessions, the last of which earns the long break.
-	longBreakEvery = 3
+	defaultWorkMinutes       = 25
+	defaultShortBreakMinutes = 5
+	defaultLongBreakMinutes  = 15
+	defaultLongBreakEvery    = 3
 )
 
 type pomodoroTickMsg time.Time
@@ -35,13 +36,29 @@ type pomodoro struct {
 	remaining time.Duration
 	running   bool
 	completed int // completed work sessions, drives the long-break cadence
+
+	// Configurable durations, in minutes, plus the long-break cadence and
+	// whether the next phase starts automatically. Editable from the
+	// Settings modal; zero values are never stored here (newPomodoro and the
+	// settings modal always fill in the defaults), so phaseDuration never
+	// needs to fall back itself.
+	workMinutes       int
+	shortBreakMinutes int
+	longBreakMinutes  int
+	longBreakEvery    int
+	autoStartNext     bool
 }
 
 func newPomodoro() pomodoro {
-	return pomodoro{
-		phase:     phaseWork,
-		remaining: workDuration,
+	p := pomodoro{
+		workMinutes:       defaultWorkMinutes,
+		shortBreakMinutes: defaultShortBreakMinutes,
+		longBreakMinutes:  defaultLongBreakMinutes,
+		longBreakEvery:    defaultLongBreakEvery,
 	}
+	p.phase = phaseWork
+	p.remaining = p.phaseDuration()
+	return p
 }
 
 func pomodoroTick() tea.Cmd {
@@ -53,11 +70,11 @@ func pomodoroTick() tea.Cmd {
 func (p pomodoro) phaseDuration() time.Duration {
 	switch p.phase {
 	case phaseShortBreak:
-		return shortBreakDuration
+		return time.Duration(p.shortBreakMinutes) * time.Minute
 	case phaseLongBreak:
-		return longBreakDuration
+		return time.Duration(p.longBreakMinutes) * time.Minute
 	default:
-		return workDuration
+		return time.Duration(p.workMinutes) * time.Minute
 	}
 }
 
@@ -68,9 +85,13 @@ func (p *pomodoro) reset() {
 // advance moves to the next phase in the work/break cycle. Every 4th
 // completed work session earns a long break instead of a short one.
 func (p *pomodoro) advance() {
+	every := p.longBreakEvery
+	if every < 1 {
+		every = defaultLongBreakEvery
+	}
 	if p.phase == phaseWork {
 		p.completed++
-		if p.completed%longBreakEvery == 0 {
+		if p.completed%every == 0 {
 			p.phase = phaseLongBreak
 		} else {
 			p.phase = phaseShortBreak
@@ -79,6 +100,7 @@ func (p *pomodoro) advance() {
 		p.phase = phaseWork
 	}
 	p.reset()
+	p.running = p.autoStartNext
 }
 
 // tick returns true when it caused the phase to advance, so the caller
@@ -230,7 +252,11 @@ func (p pomodoro) nextBreakIsLong() bool {
 	if p.phase != phaseWork {
 		return p.phase == phaseLongBreak
 	}
-	return (p.completed+1)%longBreakEvery == 0
+	every := p.longBreakEvery
+	if every < 1 {
+		every = defaultLongBreakEvery
+	}
+	return (p.completed+1)%every == 0
 }
 
 // sessionSummary is the one-line footer: how many focus sessions are done,
