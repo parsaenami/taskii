@@ -4,7 +4,7 @@ import (
 	"sort"
 	"time"
 
-	"taskii/internal/model"
+	"github.com/parsaenami/taskii/internal/model"
 )
 
 const dateFormat = "2006-01-02"

@@ -1,4 +1,4 @@
-module taskii
+module github.com/parsaenami/taskii
 
 go 1.26.3
 

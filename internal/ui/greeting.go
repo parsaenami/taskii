@@ -25,7 +25,7 @@ var taskiiBanner = []string{
 var greetingContentLines = len(taskiiBanner) + 3
 
 // Version is the app version, shown at the right of the greeting section.
-// It's overwritten at build time via -ldflags "-X taskii/internal/ui.Version=...";
+// It's overwritten at build time via -ldflags "-X github.com/parsaenami/taskii/internal/ui.Version=...";
 // "dev" is what you get from a plain `go build`/`go run`.
 var Version = "dev"
 
