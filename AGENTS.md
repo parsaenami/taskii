@@ -727,3 +727,14 @@ Added Everforest to the built-in themes palette.
 - **Palette**: Warm, earthy forest ground (`Bg: #272e33`, `PaneBg: #2d353b`, `Panel: #343f44`, `Border: #475258`) paired with signature sage green (`Accent: #a7c080`, `BorderFocus: #a7c080`), warm cream text (`#d3c6aa`), muted grey-green (`#7a8478`), warm yellow (`Warning: #dbbc7f`), soft red (`Danger: #e67e80`), and soft purple (`Purple: #d699b6`).
 - **Surface layering & contrast**: Respects the `Bg < PaneBg < Panel < Border` luminance hierarchy. High contrast on headers (`AppTitleFg: #272e33` on `#a7c080` gives 6.88:1), crisp text readability (7.38:1 on pane bg), and a strictly monotonic 5-step heatmap ramp (`#343f44`, `#3d5248`, `#516f58`, `#78a06f`, `#a7c080`).
 
+## Bubbletint integration & interactive theme browser (2026-08-23)
+
+Integrated `github.com/lrstanley/bubbletint/v2` with an adapter function, interactive search modal, bidirectional quick-cycle keys, and extensible custom theme loading.
+
+- **Curated themes**: The 7 curated themes (`Ember`, `Tokyo Night`, `Dracula`, `Nord`, `Light`, `Monokai`, `Everforest`) remain the base curated themes.
+- **Keybindings**: `t` cycles curated themes forward, and `T` / `shift+t` opens the interactive fuzzy-search theme browser.
+- **Interactive Theme Browser (`T` / `shift+t`)**: Full modal dialog featuring live filtering across 340+ themes (by name or source), arrow navigation (`↑/↓`), real-time live preview of the selected theme, `Enter` to confirm & save to `data/settings.json`, and `Esc`/`ctrl+c` to cancel and revert to the previous theme.
+- **Adaptive tint conversion (`tintToTheme`)**: Bubbletint palettes are dynamically adapted to taskii's 3-layer surface model (`Bg`, `PaneBg`, `Panel`), computing contrast-aware `AppTitleFg` and generating a 5-step monotonic `HeatmapRamp`.
+- **Extensible custom theme support**: Users can drop custom `.json` or `.jsonl` theme files into `data/themes/` or `~/.config/taskii/themes/` supporting both full `Theme` definitions and `bubbletint.Tint` definitions.
+
+
