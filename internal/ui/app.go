@@ -2021,8 +2021,18 @@ func overlayModal(bgPage, modal string, width, height int) string {
 		rightCol := startCol + modalW
 		var right string
 		if rightCol < width {
-			pad := width - rightCol
-			right = pageBg.Render(strings.Repeat(" ", pad))
+			if rightCol < width {
+				// Keep whatever the page actually drew past the modal's right
+				// edge (other panes' content and colors) instead of blanking it
+				// to colorBg — this row isn't fully covered by the modal, only
+				// the middle of it is.
+				right = sliceANSIFrom(origLine, rightCol)
+				if pad := width - rightCol - lipgloss.Width(right); pad > 0 {
+					right += pageBg.Render(strings.Repeat(" ", pad))
+				} else if pad < 0 {
+					right = truncateANSI(right, width-rightCol)
+				}
+			}
 		}
 
 		pageLines[targetRow] = left + mLine + right
