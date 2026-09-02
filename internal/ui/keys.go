@@ -7,6 +7,7 @@ type keyMap struct {
 	Down           key.Binding
 	Tab            key.Binding
 	Add            key.Binding
+	Edit           key.Binding
 	Toggle         key.Binding
 	Delete         key.Binding
 	Quit           key.Binding
@@ -37,6 +38,10 @@ var keys = keyMap{
 	Add: key.NewBinding(
 		key.WithKeys("a"),
 		key.WithHelp("a", "add task"),
+	),
+	Edit: key.NewBinding(
+		key.WithKeys("E"),
+		key.WithHelp("E", "edit task"),
 	),
 	Toggle: key.NewBinding(
 		key.WithKeys(" ", "enter"),

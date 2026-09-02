@@ -68,6 +68,7 @@ taskii --simple   # single-pane view: greeting + one combined list of tasks, ove
 | `↑/k`, `↓/j` | move selection |
 | `tab` / `shift+tab` | switch focused pane |
 | `a` | add task / note |
+| `E` | edit selected task |
 | `space` / `enter` | toggle done (tasks) or open note |
 | `d` | delete (asks to confirm) |
 | `i` | toggle important |
@@ -85,9 +86,11 @@ taskii --simple   # single-pane view: greeting + one combined list of tasks, ove
 
 On the Reports pane, `←/→` (or `h/l`) switch between the Week, Month, and Contribution charts instead of moving a selection.
 
+To edit a task in Today, Overdue, or simple mode, select it and press `E` (Shift+e). Change its title or trailing `HH:MM` appointment time, then press `enter` to save or `esc` to cancel. Removing the time turns an appointment into a task; adding one turns a task into an appointment.
+
 ## Features
 
-- **Today / Overdue** — add tasks or timed appointments (type a trailing `14:30` to mark one as an appointment), toggle done, mark important, delete.
+- **Today / Overdue** — add or edit tasks and timed appointments (type a trailing `14:30` to mark one as an appointment), toggle done, mark important, delete.
 - **Notes** — a simple multi-line notes board, expandable to full screen.
 - **Pomodoro timer** — start, pause, reset, and skip work/break phases.
 - **Reports** — completion progress, a 7-day/monthly bar chart, and a contribution heatmap.
@@ -98,6 +101,7 @@ On the Reports pane, `←/→` (or `h/l`) switch between the Week, Month, and Co
 
 ```bash
 go build ./...   # build
+go test ./...    # tests
 go vet ./...     # static checks
 gofmt -l .       # formatting check
 ```

@@ -106,7 +106,7 @@ func (a App) simpleLines(entries []simpleEntry, width int) []simpleDisplayLine {
 // DISPLAY LINE, and the scroll indicator is always emitted so the list's
 // height never changes with scroll state.
 func (a App) renderSimpleList(entries []simpleEntry, visibleRows, width int) string {
-	if len(entries) == 0 && a.mode != modeAdding && a.mode != modeNoteEditing {
+	if len(entries) == 0 && a.mode != modeAdding && a.mode != modeEditing && a.mode != modeNoteEditing {
 		// colorBg, not hintStyle's colorPaneBg — see the scroll indicator below.
 		return lipgloss.NewStyle().Foreground(colorMuted).Background(colorBg).
 			Render("(nothing yet)") + "\n"
@@ -256,7 +256,7 @@ func (a App) simpleBodyHeight() int {
 func (a App) simpleVisibleRows() int {
 	// -1 for the scroll indicator, -simpleTabsHeight for the TASK/NOTE tabs.
 	rows := a.simpleBodyHeight() - 1 - simpleTabsHeight
-	if a.mode == modeAdding {
+	if a.mode == modeAdding || a.mode == modeEditing {
 		rows--
 	}
 	if a.mode == modeNoteEditing {
@@ -312,24 +312,8 @@ func (a App) renderSimple() string {
 	list := a.renderSimpleTabs(lw) + "\n" +
 		a.renderSimpleList(entries, a.simpleVisibleRows(), lw)
 
-	if a.mode == modeAdding {
-		a.input.TextStyle = lipgloss.NewStyle().Foreground(colorText).Background(colorBg)
-		a.input.PlaceholderStyle = lipgloss.NewStyle().Foreground(colorMuted).Background(colorBg)
-		a.input.PromptStyle = lipgloss.NewStyle().Foreground(colorAccent).Background(colorBg)
-		a.input.Cursor.Style = lipgloss.NewStyle().Foreground(colorText).Background(colorBg)
-		// inputPromptStyle bakes in colorPaneBg; re-base it on the page
-		// surface, since simple mode has no panes.
-		promptStyle := inputPromptStyle.Copy().Background(colorBg)
-		if field := lw - lipgloss.Width(promptStyle.Render("+ ")) - lipgloss.Width(a.input.Prompt) - 1; field > 0 &&
-			lipgloss.Width(a.input.Placeholder) > field {
-			a.input.Placeholder = fitToWidth(a.input.Placeholder, field)
-		}
-		a.input.Width = 0
-		line := promptStyle.Render("+ ") + a.input.View()
-		if pad := lw - lipgloss.Width(line); pad > 0 {
-			line += lipgloss.NewStyle().Background(colorBg).Render(strings.Repeat(" ", pad))
-		}
-		list += "\n" + line
+	if a.mode == modeAdding || a.mode == modeEditing {
+		list += "\n" + a.renderTaskInput(lw, colorBg)
 	}
 	if a.mode == modeNoteEditing {
 		list += "\n" + a.renderNoteEditor(lw)
