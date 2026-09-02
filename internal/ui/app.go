@@ -32,6 +32,7 @@ type mode int
 const (
 	modeNormal mode = iota
 	modeAdding
+	modeEditing
 	modeConfirmDelete
 	modeNoteEditing
 	modeConfirmClearNotes
@@ -81,10 +82,11 @@ type App struct {
 	simpleScroll   int
 	simpleNoteMode bool
 
-	input     textinput.Model
-	err       string
-	status    string
-	noPersist bool
+	input      textinput.Model
+	taskEditID string
+	err        string
+	status     string
+	noPersist  bool
 
 	username string
 	layout   layout
@@ -192,6 +194,15 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
+		if a.mode == modeAdding || a.mode == modeEditing {
+			a.input.Width = a.inputFieldWidth()
+			a.input.SetCursor(a.input.Position())
+			if a.simple {
+				a.syncSimpleScroll(a.simpleEntries())
+			} else {
+				a.syncScroll()
+			}
+		}
 		return a, nil
 
 	case pomodoroTickMsg:
@@ -202,8 +213,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch a.mode {
-		case modeAdding:
-			return a.updateAdding(msg)
+		case modeAdding, modeEditing:
+			return a.updateTaskInput(msg)
 		case modeConfirmDelete:
 			return a.updateConfirmDelete(msg)
 		case modeNoteEditing:
@@ -262,6 +273,12 @@ func (a App) updateSimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.input.SetValue("")
 		a.input.Focus()
 		return a, textinput.Blink
+
+	case "E":
+		if t := a.selectedTask(); t != nil {
+			return a.startTaskEdit(*t)
+		}
+		return a, nil
 
 	case " ", "enter":
 		if a.simpleSelected < 0 || a.simpleSelected >= len(entries) {
@@ -461,6 +478,12 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
+	case "E":
+		if t := a.selectedTask(); t != nil {
+			return a.startTaskEdit(*t)
+		}
+		return a, nil
+
 	case " ", "enter":
 		if a.focus == focusReports {
 			return a, nil
@@ -567,13 +590,51 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return a, nil
 }
 
-func (a App) updateAdding(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (a App) startTaskEdit(t model.Task) (tea.Model, tea.Cmd) {
+	a.mode = modeEditing
+	a.taskEditID = t.ID
+	raw := t.Title
+	if t.Time != "" {
+		raw += " " + t.Time
+	}
+	// Saved tasks may predate the input limit or have been edited externally.
+	// Prefilling must never truncate an existing title.
+	a.input.CharLimit = max(120, len([]rune(raw)))
+	a.input.Width = a.inputFieldWidth()
+	a.input.SetValue(raw)
+	a.input.CursorEnd()
+	a.input.Focus()
+	if a.simple {
+		a.syncSimpleScroll(a.simpleEntries())
+	} else {
+		a.syncScroll()
+	}
+	return a, textinput.Blink
+}
+
+func (a App) updateTaskInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		a.mode = modeNormal
+		a.taskEditID = ""
+		a.input.CharLimit = 120
+		a.input.SetValue("")
 		a.input.Blur()
 		return a, nil
 	case "enter":
+		if a.mode == modeEditing {
+			if !a.editTask(a.input.Value()) {
+				return a, nil
+			}
+			id := a.taskEditID
+			a.mode = modeNormal
+			a.taskEditID = ""
+			a.input.CharLimit = 120
+			a.input.SetValue("")
+			a.input.Blur()
+			a.selectTaskByID(id)
+			return a, nil
+		}
 		a.addTask(a.input.Value())
 		a.input.SetValue("")
 		return a, nil
@@ -860,31 +921,70 @@ func (a *App) persistNotes() {
 // panes span the full width rather than a 3:5 column.
 func (a *App) leftPaneWidth() int { return a.geometry().taskWidth }
 
-// inputFieldWidth is how many cells the add-task value itself may occupy:
-// the pane interior (outer width less border and padding) minus the "+ "
+func (a App) taskInputVisible(focus focusedPane) bool {
+	return (a.mode == modeAdding && focus == focusToday) ||
+		(a.mode == modeEditing && focus == a.focus)
+}
+
+func (a App) taskInputPrompt() string {
+	if a.mode == modeEditing {
+		return "~ "
+	}
+	return "+ "
+}
+
+// renderTaskInput shares the inline editor between both task panes and simple
+// mode. The surface is explicit because simple mode has no pane background.
+func (a App) renderTaskInput(width int, surface lipgloss.Color) string {
+	a.input.TextStyle = lipgloss.NewStyle().Foreground(colorText).Background(surface)
+	a.input.PlaceholderStyle = lipgloss.NewStyle().Foreground(colorMuted).Background(surface)
+	a.input.PromptStyle = lipgloss.NewStyle().Foreground(colorAccent).Background(surface)
+	a.input.Cursor.Style = lipgloss.NewStyle().Foreground(colorText).Background(surface)
+
+	field := a.inputFieldWidth()
+	if lipgloss.Width(a.input.Placeholder) > field {
+		a.input.Placeholder = fitToWidth(a.input.Placeholder, field)
+	}
+	// Recompute the visible slice after prefilling or resizing. Width is
+	// consumed by SetCursor; clear it for View to avoid the widget's differing
+	// padding rules for placeholders and values, then fill the row ourselves.
+	a.input.Width = field
+	a.input.SetCursor(a.input.Position())
+	a.input.Width = 0
+	line := inputPromptStyle.Copy().Background(surface).Render(a.taskInputPrompt()) + a.input.View()
+	if pad := width - lipgloss.Width(line); pad > 0 {
+		line += lipgloss.NewStyle().Background(surface).Render(strings.Repeat(" ", pad))
+	}
+	return line
+}
+
+// inputFieldWidth is how many cells the task input value itself may occupy:
+// the pane interior (outer width less border and padding) minus the input
 // prompt, the widget's own one-cell prompt, and the cursor block it always
 // appends past the value. Under-reserving here doesn't wrap the line, it
 // pushes it a cell past the pane border, since renderPane clamps height but
 // not width.
 func (a *App) inputFieldWidth() int {
-	w := a.leftPaneWidth() - 4 -
-		lipgloss.Width(inputPromptStyle.Render("+ ")) -
-		lipgloss.Width(a.input.Prompt) - 1
+	w := a.leftPaneWidth() - 4
+	if a.simple {
+		w = a.simpleListWidth()
+	}
+	w -= lipgloss.Width(a.taskInputPrompt()) +
+		lipgloss.Width(a.input.Prompt) + 1
 	if w < 1 {
 		w = 1
 	}
 	return w
 }
 
-func (a *App) addTask(raw string) {
+func parseTaskInput(raw string) (title string, kind model.Kind, taskTime string, ok bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return
 	}
 
-	title := raw
-	taskTime := ""
-	kind := model.KindTask
+	title = raw
+	kind = model.KindTask
 	fields := strings.Fields(raw)
 	if len(fields) > 0 {
 		last := fields[len(fields)-1]
@@ -894,7 +994,12 @@ func (a *App) addTask(raw string) {
 			title = strings.TrimSpace(strings.TrimSuffix(raw, last))
 		}
 	}
-	if title == "" {
+	return title, kind, taskTime, title != ""
+}
+
+func (a *App) addTask(raw string) {
+	title, kind, taskTime, ok := parseTaskInput(raw)
+	if !ok {
 		return
 	}
 
@@ -913,8 +1018,25 @@ func (a *App) addTask(raw string) {
 	a.selectTaskByID(t.ID)
 }
 
+func (a *App) editTask(raw string) bool {
+	title, kind, taskTime, ok := parseTaskInput(raw)
+	if !ok {
+		return false
+	}
+	for i := range a.tasks {
+		if a.tasks[i].ID == a.taskEditID {
+			a.tasks[i].Title = title
+			a.tasks[i].Kind = kind
+			a.tasks[i].Time = taskTime
+			a.persist()
+			return true
+		}
+	}
+	return false
+}
+
 // selectTaskByID moves the selection onto the task with the given ID and
-// scrolls it into view, so a freshly added task is the one under the cursor.
+// scrolls it into view, so an added or edited task stays under the cursor.
 // Today's list is sorted (appointments by time) and simple mode's is merged by
 // creation time, so the new row is found by ID rather than assumed to be last.
 // An active filter can hide the task entirely, in which case the selection is
@@ -934,9 +1056,15 @@ func (a *App) selectTaskByID(id string) {
 	for i, t := range a.todayTasks() {
 		if t.ID == id {
 			a.todaySelected = i
-			// Selection only follows the cursor in the pane that owns it;
-			// adding is Today-only, so focus Today to make the move visible.
 			a.focus = focusToday
+			a.syncScroll()
+			return
+		}
+	}
+	for i, t := range a.overdueTasks() {
+		if t.ID == id {
+			a.overdueSelected = i
+			a.focus = focusOverdue
 			a.syncScroll()
 			return
 		}
@@ -1132,6 +1260,13 @@ func (a App) saveSettings() {
 // selectedTask returns the task under the cursor in the focused pane, or nil
 // when the pane is empty (or the selection is somehow out of range).
 func (a *App) selectedTask() *model.Task {
+	if a.simple {
+		entries := a.simpleEntries()
+		if a.simpleSelected < 0 || a.simpleSelected >= len(entries) || entries[a.simpleSelected].isNote {
+			return nil
+		}
+		return &entries[a.simpleSelected].task
+	}
 	list := a.currentList()
 	sel := a.currentSelected()
 	if sel < 0 || sel >= len(list) {
@@ -1323,7 +1458,7 @@ func (a App) helpGroups() []helpGroup {
 		return []helpGroup{
 			{"", []helpKey{
 				{"a", "add " + what}, {"tab", "switch to " + map[bool]string{true: "task", false: "note"}[a.simpleNoteMode]},
-				{"space/enter", "toggle/edit"}, {"d", "delete"}, {"i", "important"},
+				{"space/enter", "toggle/edit"}, {"E", "edit task"}, {"d", "delete"}, {"i", "important"},
 				{"↑/↓ j/k", "navigate"}, {"t", "theme"}, {"q", "quit"},
 			}},
 		}
@@ -1353,6 +1488,14 @@ func (a App) helpGroups() []helpGroup {
 			{"", []helpKey{
 				{"enter", "confirm"}, {"esc", "cancel"},
 				{"", "end with HH:MM to add it as an appointment"},
+			}},
+		}
+	}
+	if a.mode == modeEditing {
+		return []helpGroup{
+			{"", []helpKey{
+				{"enter", "save"}, {"esc", "cancel"},
+				{"", "trailing HH:MM sets the time; remove it for a task"},
 			}},
 		}
 	}
@@ -1398,7 +1541,7 @@ func (a App) helpGroups() []helpGroup {
 		taskKeys = nil
 	}
 	taskKeys = append(taskKeys,
-		helpKey{"space/enter", "toggle"}, helpKey{"d", "delete"}, helpKey{"i", "important"})
+		helpKey{"E", "edit"}, helpKey{"space/enter", "toggle"}, helpKey{"d", "delete"}, helpKey{"i", "important"})
 
 	return []helpGroup{
 		{"Task", taskKeys},
@@ -1455,8 +1598,8 @@ func (a App) visibleRowsFor(focus focusedPane) int {
 	// otherwise the pane grows by a line whenever "N more" starts appearing.
 	indicatorLines := 1
 	rows := contentHeight - indicatorLines
-	if focus == focusToday && a.mode == modeAdding {
-		rows-- // reserve a line for the inline add-task input
+	if a.taskInputVisible(focus) {
+		rows-- // reserve a line for the inline task input
 	}
 	if focus == focusNotes && a.mode == modeNoteEditing {
 		// The note editor is multi-line, so reserve its full height.
@@ -1530,40 +1673,8 @@ func (a App) renderPage() string {
 	today := a.todayTasks()
 	todayVisible := a.visibleRowsFor(focusToday)
 	todayBody := renderTaskList(today, a.todaySelected, a.todayScroll, todayVisible, a.focus == focusToday, false, leftWidth-4)
-	if a.mode == modeAdding {
-		// Set here rather than once in NewApp so these follow theme changes.
-		a.input.TextStyle = lipgloss.NewStyle().Foreground(colorText).Background(colorPaneBg)
-		a.input.PlaceholderStyle = lipgloss.NewStyle().Foreground(colorMuted).Background(colorPaneBg)
-		a.input.PromptStyle = lipgloss.NewStyle().Foreground(colorAccent).Background(colorPaneBg)
-		a.input.Cursor.Style = lipgloss.NewStyle().Foreground(colorText).Background(colorPaneBg)
-
-		// Clip the placeholder to the field. The widget truncates a typed
-		// *value* to Width but never its placeholder, so on a narrow pane the
-		// full hint text ran past the border — and then vanished to a correct
-		// width on the first keystroke, reading as the line resizing as soon
-		// as you started typing.
-		if field := a.inputFieldWidth(); lipgloss.Width(a.input.Placeholder) > field {
-			a.input.Placeholder = fitToWidth(a.input.Placeholder, field)
-		}
-
-		// Render with Width unset and do the trailing fill ourselves. The
-		// widget's own padding differs between its two branches — the
-		// placeholder path pads to Width while the typed path pads to Width
-		// and *then* appends a cursor cell past it — so letting it size the
-		// line made the row jump wider the moment a key was pressed. Its
-		// padding also goes through TextStyle, emerging wrapped in SGR
-		// codes that a TrimRight(" ") can't strip back off.
-		//
-		// Width still matters for horizontal scrolling of long values, but
-		// that's consumed in Update (handleOverflow), not here, so clearing
-		// it at render time costs nothing. View has a value receiver, so
-		// this only touches the local copy used for this frame.
-		a.input.Width = 0
-		inputLine := inputPromptStyle.Render("+ ") + a.input.View()
-		if pad := (leftWidth - 4) - lipgloss.Width(inputLine); pad > 0 {
-			inputLine += lipgloss.NewStyle().Background(colorPaneBg).Render(strings.Repeat(" ", pad))
-		}
-		todayBody += "\n" + inputLine
+	if a.taskInputVisible(focusToday) {
+		todayBody += "\n" + a.renderTaskInput(leftWidth-4, colorPaneBg)
 	}
 	todayPane := renderPane(fmt.Sprintf("Today (%d)%s", len(today), filters), todayBody, a.focus == focusToday, leftWidth, todayHeight)
 
@@ -1574,6 +1685,9 @@ func (a App) renderPage() string {
 	overdueWidth := leftWidth
 	overdueVisible := a.visibleRowsFor(focusOverdue)
 	overdueBody := renderTaskList(overdue, a.overdueSelected, a.overdueScroll, overdueVisible, a.focus == focusOverdue, true, overdueWidth-4)
+	if a.taskInputVisible(focusOverdue) {
+		overdueBody += "\n" + a.renderTaskInput(overdueWidth-4, colorPaneBg)
+	}
 	overduePane := renderPane(fmt.Sprintf("Overdue (%d)%s", len(overdue), filters), overdueBody, a.focus == focusOverdue, overdueWidth, overdueHeight)
 
 	tasks := lipgloss.JoinVertical(lipgloss.Left, todayPane, overduePane)

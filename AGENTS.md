@@ -727,3 +727,9 @@ Added Everforest to the built-in themes palette.
 - **Palette**: Warm, earthy forest ground (`Bg: #272e33`, `PaneBg: #2d353b`, `Panel: #343f44`, `Border: #475258`) paired with signature sage green (`Accent: #a7c080`, `BorderFocus: #a7c080`), warm cream text (`#d3c6aa`), muted grey-green (`#7a8478`), warm yellow (`Warning: #dbbc7f`), soft red (`Danger: #e67e80`), and soft purple (`Purple: #d699b6`).
 - **Surface layering & contrast**: Respects the `Bg < PaneBg < Panel < Border` luminance hierarchy. High contrast on headers (`AppTitleFg: #272e33` on `#a7c080` gives 6.88:1), crisp text readability (7.38:1 on pane bg), and a strictly monotonic 5-step heatmap ramp (`#343f44`, `#3d5248`, `#516f58`, `#78a06f`, `#a7c080`).
 
+## Task editing (2026-09-01)
+
+- `E` edits the selected task in Today, Overdue, and simple mode using the existing inline input. Enter saves; Esc cancels. Lowercase `e` still expands Notes.
+- Add and edit share the trailing `HH:MM` parser. Editing updates only title, kind, and time, preserving the task ID, date, completion state, importance, and timestamps. Selection follows the task ID after sorting changes.
+- Editor rendering and row budgets account for the extra input in either task pane and simple mode. README, the key map, and contextual help describe the new binding.
+- Verification: `git diff --check` passed and the changes were inspected against existing naming/formatting conventions. `go test ./...`, `go vet ./...`, `go build ./...`, `gofmt`, and interactive verification could not run: this workspace has no Go toolchain, and the attempted toolchain download ended with network approval cancelled before a decision. These checks remain required before merging.
