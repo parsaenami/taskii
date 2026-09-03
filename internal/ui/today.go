@@ -14,7 +14,7 @@ import (
 // for the scroll indicator, so pane height stays constant whether or not the
 // indicator is actually shown). scrollOffset is the index of the first
 // visible task.
-func renderTaskList(tasks []model.Task, selected int, scrollOffset int, visibleRows int, focused bool, overdue bool, width int) string {
+func renderTaskList(tasks []model.Task, selected int, scrollOffset int, visibleRows int, focused bool, overdue bool, width int, showDate bool) string {
 	if len(tasks) == 0 {
 		// Blank second line matches the indicator line always emitted below,
 		// so an empty list is the same height as a populated one.
@@ -25,6 +25,7 @@ func renderTaskList(tasks []model.Task, selected int, scrollOffset int, visibleR
 		visibleRows = 1
 	}
 
+	scrollOffset = max(0, min(scrollOffset, len(tasks)-1))
 	end := scrollOffset + visibleRows
 	if end > len(tasks) {
 		end = len(tasks)
@@ -32,7 +33,7 @@ func renderTaskList(tasks []model.Task, selected int, scrollOffset int, visibleR
 
 	var lines []string
 	for i := scrollOffset; i < end; i++ {
-		lines = append(lines, renderTaskLine(tasks[i], i == selected && focused, overdue, width, colorPaneBg))
+		lines = append(lines, renderTaskLine(tasks[i], i == selected && focused, overdue, width, colorPaneBg, showDate))
 	}
 
 	// Always emit the indicator line, blank when unneeded, so the list's
@@ -54,7 +55,7 @@ func renderTaskList(tasks []model.Task, selected int, scrollOffset int, visibleR
 	return strings.Join(lines, "\n")
 }
 
-func renderTaskLine(t model.Task, selected bool, overdue bool, width int, surface lipgloss.Color) string {
+func renderTaskLine(t model.Task, selected bool, overdue bool, width int, surface lipgloss.Color, showDate bool) string {
 	openBracket, closeBracket := "[", "]"
 	if t.IsAppointment() {
 		openBracket, closeBracket = "{", "}"
@@ -114,6 +115,9 @@ func renderTaskLine(t model.Task, selected bool, overdue bool, width int, surfac
 	if t.Time != "" {
 		timePlain = t.Time
 	}
+	if showDate {
+		timePlain = strings.TrimSpace(t.Date + " " + timePlain)
+	}
 	starPlain := ""
 	if t.Important {
 		starPlain = "★"
@@ -143,7 +147,11 @@ func renderTaskLine(t model.Task, selected bool, overdue bool, width int, surfac
 		}
 	}
 
-	return b.String()
+	line := b.String()
+	if width > 0 && lipgloss.Width(line) > width {
+		return truncateANSI(line, width)
+	}
+	return line
 }
 
 // fitSegmentsToWidth measures the plain (unstyled) assembled line and, if it

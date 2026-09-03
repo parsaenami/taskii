@@ -28,10 +28,17 @@ type simpleEntry struct {
 // simpleEntries merges tasks and notes into one list ordered by creation time,
 // oldest first. Today's tasks, overdue tasks and notes all appear together.
 func (a App) simpleEntries() []simpleEntry {
+	if a.upcoming {
+		var out []simpleEntry
+		for _, t := range a.upcomingTasks() {
+			out = append(out, simpleEntry{created: t.CreatedAt, task: t})
+		}
+		return out
+	}
 	today := a.now().Format(dateFormat)
 	var out []simpleEntry
 
-	for _, t := range a.tasks {
+	for _, t := range a.applyFilters(a.tasks) {
 		// Today's items plus anything still undone from an earlier day —
 		// exactly the union of what the Today and Overdue panes show.
 		if t.Date != today && (t.Done || t.Date > today) {
@@ -170,7 +177,7 @@ func (a App) renderSimpleList(entries []simpleEntry, visibleRows, width int) str
 			lines = append(lines, line)
 			continue
 		}
-		lines = append(lines, renderTaskLine(e.task, selected, e.overdue, width, colorBg))
+		lines = append(lines, renderTaskLine(e.task, selected, e.overdue, width, colorBg, a.upcoming))
 	}
 
 	above := scroll
@@ -290,6 +297,9 @@ func (a App) renderSimpleTabs(width int) string {
 	}
 
 	row := tab("TASK", !a.simpleNoteMode) + gap.Render(" ") + tab("NOTE", a.simpleNoteMode)
+	if a.upcoming {
+		row = tab("Upcoming", true) + idleStyle.Render(filterLabel(a.filterImportant, a.filterUndone))
+	}
 	if pad := width - lipgloss.Width(row); pad > 0 {
 		row += gap.Render(strings.Repeat(" ", pad))
 	} else if pad < 0 {
