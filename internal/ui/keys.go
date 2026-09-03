@@ -15,6 +15,7 @@ type keyMap struct {
 	Important      key.Binding
 	FilterImp      key.Binding
 	FilterUndone   key.Binding
+	Upcoming       key.Binding
 	PomodoroToggle key.Binding
 	PomodoroReset  key.Binding
 	PomodoroSkip   key.Binding
@@ -67,6 +68,10 @@ var keys = keyMap{
 	FilterUndone: key.NewBinding(
 		key.WithKeys("U"),
 		key.WithHelp("U", "filter undone"),
+	),
+	Upcoming: key.NewBinding(
+		key.WithKeys("C"),
+		key.WithHelp("C", "upcoming/today"),
 	),
 	PomodoroToggle: key.NewBinding(
 		key.WithKeys("p"),

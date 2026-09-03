@@ -49,6 +49,7 @@ type App struct {
 	focus focusedPane
 	mode  mode
 
+	upcoming      bool // the Today pane is currently showing future tasks
 	todaySelected int
 	todayScroll   int
 
@@ -81,10 +82,11 @@ type App struct {
 	simpleScroll   int
 	simpleNoteMode bool
 
-	input     textinput.Model
-	err       string
-	status    string
-	noPersist bool
+	input        textinput.Model
+	err          string
+	status       string
+	noPersist    bool
+	deleteItemID string // task/note shown when the delete confirmation opened
 
 	username string
 	layout   layout
@@ -152,7 +154,7 @@ func NewApp(opts Options) App {
 	}
 
 	ti := textinput.New()
-	ti.Placeholder = "Title, or end with HH:MM to add it as an appointment"
+	ti.Placeholder = "Title [MM-DD] [HH:MM]"
 	ti.CharLimit = 120
 
 	ta := textarea.New()
@@ -192,9 +194,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
+		a.clampSelections()
 		return a, nil
 
 	case pomodoroTickMsg:
+		// Tasks move between date-based lists at midnight without a reload.
+		a.clampSelections()
 		if a.pomo.tick() {
 			return a, tea.Batch(pomodoroTick(), notifyPhaseChange(a.pomo.phase))
 		}
@@ -233,7 +238,7 @@ var expandedAllowedKeys = map[string]bool{
 
 // updateSimple is the whole key map for --simple: one list, one selection,
 // and tab choosing which kind of item `a` will add. The other panes don't
-// exist here, so their bindings (pomodoro, filters, focus switching, layout)
+// exist here, so their bindings (pomodoro, focus switching, layout)
 // are simply absent rather than being gated off.
 func (a App) updateSimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	entries := a.simpleEntries()
@@ -242,7 +247,24 @@ func (a App) updateSimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		return a, tea.Quit
 
+	case "C":
+		a.toggleUpcoming()
+		return a, nil
+
+	case "I":
+		a.filterImportant = !a.filterImportant
+		a.clampSelections()
+		return a, nil
+
+	case "U":
+		a.filterUndone = !a.filterUndone
+		a.clampSelections()
+		return a, nil
+
 	case "tab":
+		if a.upcoming {
+			a.toggleUpcoming()
+		}
 		a.simpleNoteMode = !a.simpleNoteMode
 		return a, nil
 
@@ -275,10 +297,12 @@ func (a App) updateSimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		a.toggleTaskByID(e.task.ID)
+		a.clampSelections()
 		return a, nil
 
 	case "d":
 		if a.simpleSelected >= 0 && a.simpleSelected < len(entries) {
+			a.deleteItemID = a.selectedItemID()
 			a.mode = modeConfirmDelete
 		}
 		return a, nil
@@ -287,6 +311,7 @@ func (a App) updateSimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if a.simpleSelected >= 0 && a.simpleSelected < len(entries) {
 			if e := entries[a.simpleSelected]; !e.isNote {
 				a.toggleImportantByID(e.task.ID)
+				a.clampSelections()
 			}
 		}
 		return a, nil
@@ -335,6 +360,7 @@ func (a *App) syncSimpleScroll(entries []simpleEntry) {
 		}
 	}
 	if first < 0 {
+		a.simpleScroll = 0
 		return
 	}
 	scroll := a.simpleScroll
@@ -485,11 +511,13 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if a.focus == focusNotes {
 			if len(a.notes) > 0 {
+				a.deleteItemID = a.selectedItemID()
 				a.mode = modeConfirmDelete
 			}
 			return a, nil
 		}
-		if a.selectedTask() != nil {
+		if selected := a.selectedTask(); selected != nil {
+			a.deleteItemID = a.selectedItemID()
 			a.mode = modeConfirmDelete
 		}
 		return a, nil
@@ -497,8 +525,12 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "C":
 		// Clear the whole board. Capitalised and confirmed, since it discards
 		// everything at once.
-		if a.focus == focusNotes && len(a.notes) > 0 {
-			a.mode = modeConfirmClearNotes
+		if a.focus == focusNotes {
+			if len(a.notes) > 0 {
+				a.mode = modeConfirmClearNotes
+			}
+		} else {
+			a.toggleUpcoming()
 		}
 		return a, nil
 
@@ -574,8 +606,9 @@ func (a App) updateAdding(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.input.Blur()
 		return a, nil
 	case "enter":
-		a.addTask(a.input.Value())
-		a.input.SetValue("")
+		if a.addTask(a.input.Value()) {
+			a.input.SetValue("")
+		}
 		return a, nil
 	}
 
@@ -876,41 +909,31 @@ func (a *App) inputFieldWidth() int {
 	return w
 }
 
-func (a *App) addTask(raw string) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return
-	}
-
-	title := raw
-	taskTime := ""
-	kind := model.KindTask
-	fields := strings.Fields(raw)
-	if len(fields) > 0 {
-		last := fields[len(fields)-1]
-		if isTimeLike(last) {
-			taskTime = last
-			kind = model.KindAppointment
-			title = strings.TrimSpace(strings.TrimSuffix(raw, last))
-		}
-	}
-	if title == "" {
-		return
+func (a *App) addTask(raw string) bool {
+	now := a.now()
+	input, err := parseTaskInput(raw, now)
+	if err != nil {
+		a.err = err.Error()
+		return false
 	}
 
 	t := model.Task{
-		ID:        strconv.FormatInt(a.now().UnixNano(), 36),
-		Title:     title,
+		ID:        strconv.FormatInt(now.UnixNano(), 36),
+		Title:     input.Title,
 		Done:      false,
-		Kind:      kind,
-		Date:      a.now().Format(dateFormat),
-		Time:      taskTime,
-		CreatedAt: a.now(),
+		Kind:      input.Kind,
+		Date:      input.Date,
+		Time:      input.Time,
+		CreatedAt: now,
 	}
 
+	a.err = ""
 	a.tasks = append(a.tasks, t)
 	a.persist()
+	a.showTaskDate(t.Date)
 	a.selectTaskByID(t.ID)
+	a.status = "Added for " + t.Date
+	return true
 }
 
 // selectTaskByID moves the selection onto the task with the given ID and
@@ -931,7 +954,7 @@ func (a *App) selectTaskByID(id string) {
 		}
 		return
 	}
-	for i, t := range a.todayTasks() {
+	for i, t := range a.activeDayTasks() {
 		if t.ID == id {
 			a.todaySelected = i
 			// Selection only follows the cursor in the pane that owns it;
@@ -1050,7 +1073,13 @@ func (a App) notesContentWidth() int {
 }
 
 func (a *App) clampSelections() {
-	todayLen := len(a.todayTasks())
+	if a.simple {
+		entries := a.simpleEntries()
+		a.simpleSelected = max(0, min(a.simpleSelected, len(entries)-1))
+		a.syncSimpleScroll(entries)
+		return
+	}
+	todayLen := len(a.activeDayTasks())
 	if a.todaySelected >= todayLen {
 		a.todaySelected = todayLen - 1
 	}
@@ -1070,7 +1099,13 @@ func (a *App) clampSelections() {
 	if a.notesSelected < 0 {
 		a.notesSelected = 0
 	}
-	a.syncScroll()
+	// Both task panes stay valid even when another pane has focus.
+	focus := a.focus
+	for _, pane := range []focusedPane{focusToday, focusOverdue, focusNotes} {
+		a.focus = pane
+		a.syncScroll()
+	}
+	a.focus = focus
 }
 
 func (a *App) toggleSelected() {
@@ -1093,6 +1128,7 @@ func (a *App) toggleSelected() {
 		}
 	}
 	a.persist()
+	a.clampSelections()
 }
 
 func (a *App) toggleImportantSelected() {
@@ -1109,6 +1145,7 @@ func (a *App) toggleImportantSelected() {
 		}
 	}
 	a.persist()
+	a.clampSelections()
 }
 
 // saveSettings persists every user preference at once. Settings are written
@@ -1140,12 +1177,45 @@ func (a *App) selectedTask() *model.Task {
 	return &list[sel]
 }
 
+// selectedItemID pins a confirmation to its task or note, even when a date
+// change changes the visible list while the user is answering the prompt.
+func (a *App) selectedItemID() string {
+	if a.simple {
+		entries := a.simpleEntries()
+		if a.simpleSelected < 0 || a.simpleSelected >= len(entries) {
+			return ""
+		}
+		entry := entries[a.simpleSelected]
+		if entry.isNote {
+			return "note:" + entry.note.ID
+		}
+		return "task:" + entry.task.ID
+	}
+	if a.focus == focusNotes {
+		if a.notesSelected >= 0 && a.notesSelected < len(a.notes) {
+			return "note:" + a.notes[a.notesSelected].ID
+		}
+		return ""
+	}
+	if task := a.selectedTask(); task != nil {
+		return "task:" + task.ID
+	}
+	return ""
+}
+
 // updateConfirmDelete handles the y/n prompt shown before a delete. Anything
 // other than an explicit confirmation cancels, so a stray keypress can't
 // destroy a task.
 func (a App) updateConfirmDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y", "enter":
+		if a.deleteItemID != "" && a.selectedItemID() != a.deleteItemID {
+			a.mode = modeNormal
+			a.deleteItemID = ""
+			a.status = "Item list changed; delete cancelled"
+			return a, nil
+		}
+		a.deleteItemID = ""
 		switch {
 		case a.simple:
 			a.deleteSimpleSelected()
@@ -1155,9 +1225,11 @@ func (a App) updateConfirmDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			a.deleteSelected()
 		}
 		a.mode = modeNormal
+		a.clampSelections()
 		return a, nil
 	default:
 		a.mode = modeNormal
+		a.deleteItemID = ""
 		a.status = "Delete cancelled"
 		return a, nil
 	}
@@ -1203,7 +1275,7 @@ func (a *App) persist() {
 func (a App) currentList() []model.Task {
 	switch a.focus {
 	case focusToday:
-		return a.todayTasks()
+		return a.activeDayTasks()
 	case focusOverdue:
 		return a.overdueTasks()
 	default:
@@ -1324,6 +1396,7 @@ func (a App) helpGroups() []helpGroup {
 			{"", []helpKey{
 				{"a", "add " + what}, {"tab", "switch to " + map[bool]string{true: "task", false: "note"}[a.simpleNoteMode]},
 				{"space/enter", "toggle/edit"}, {"d", "delete"}, {"i", "important"},
+				{"C", a.upcomingSwitchLabel()}, {"I/U", "filters"},
 				{"↑/↓ j/k", "navigate"}, {"t", "theme"}, {"q", "quit"},
 			}},
 		}
@@ -1352,7 +1425,7 @@ func (a App) helpGroups() []helpGroup {
 		return []helpGroup{
 			{"", []helpKey{
 				{"enter", "confirm"}, {"esc", "cancel"},
-				{"", "end with HH:MM to add it as an appointment"},
+				{"", "title [MM-DD] [HH:MM]"},
 			}},
 		}
 	}
@@ -1383,7 +1456,7 @@ func (a App) helpGroups() []helpGroup {
 			{"Chart", []helpKey{
 				{"←/→ h/l", "switch chart"}, {"", a.reportChart.String()},
 			}},
-			{"View", []helpKey{{"tab", "switch pane"}}},
+			{"View", []helpKey{{"tab", "switch pane"}, {"C", a.upcomingSwitchLabel()}}},
 			{"App", []helpKey{
 				{"t", "theme"}, {"S", "settings"}, {"L", "layout"}, {"q", "quit"},
 			}},
@@ -1403,7 +1476,7 @@ func (a App) helpGroups() []helpGroup {
 	return []helpGroup{
 		{"Task", taskKeys},
 		{"View", []helpKey{
-			{"tab", "switch pane"}, {"↑/↓ j/k", "navigate"}, {"I/U", "filters"},
+			{"tab", "switch pane"}, {"↑/↓ j/k", "navigate"}, {"C", a.upcomingSwitchLabel()}, {"I/U", "filters"},
 		}},
 		// Pomodoro's keys aren't listed here — they're rendered inside the
 		// Pomodoro pane itself, next to the thing they control.
@@ -1527,9 +1600,9 @@ func (a App) renderPage() string {
 
 	filters := filterLabel(a.filterImportant, a.filterUndone)
 
-	today := a.todayTasks()
+	today := a.activeDayTasks()
 	todayVisible := a.visibleRowsFor(focusToday)
-	todayBody := renderTaskList(today, a.todaySelected, a.todayScroll, todayVisible, a.focus == focusToday, false, leftWidth-4)
+	todayBody := renderTaskList(today, a.todaySelected, a.todayScroll, todayVisible, a.focus == focusToday, false, leftWidth-4, a.upcoming)
 	if a.mode == modeAdding {
 		// Set here rather than once in NewApp so these follow theme changes.
 		a.input.TextStyle = lipgloss.NewStyle().Foreground(colorText).Background(colorPaneBg)
@@ -1565,7 +1638,7 @@ func (a App) renderPage() string {
 		}
 		todayBody += "\n" + inputLine
 	}
-	todayPane := renderPane(fmt.Sprintf("Today (%d)%s", len(today), filters), todayBody, a.focus == focusToday, leftWidth, todayHeight)
+	todayPane := renderPane(fmt.Sprintf("%s (%d)%s", a.activeDayTitle(), len(today), filters), todayBody, a.focus == focusToday, leftWidth, todayHeight)
 
 	overdue := a.overdueTasks()
 	// In the stacked layout Today, Overdue and Notes share the row equally
@@ -1573,7 +1646,7 @@ func (a App) renderPage() string {
 	// Today and Overdue are stacked at the same width.
 	overdueWidth := leftWidth
 	overdueVisible := a.visibleRowsFor(focusOverdue)
-	overdueBody := renderTaskList(overdue, a.overdueSelected, a.overdueScroll, overdueVisible, a.focus == focusOverdue, true, overdueWidth-4)
+	overdueBody := renderTaskList(overdue, a.overdueSelected, a.overdueScroll, overdueVisible, a.focus == focusOverdue, true, overdueWidth-4, false)
 	overduePane := renderPane(fmt.Sprintf("Overdue (%d)%s", len(overdue), filters), overdueBody, a.focus == focusOverdue, overdueWidth, overdueHeight)
 
 	tasks := lipgloss.JoinVertical(lipgloss.Left, todayPane, overduePane)
