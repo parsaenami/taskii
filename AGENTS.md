@@ -727,3 +727,33 @@ Added Everforest to the built-in themes palette.
 - **Palette**: Warm, earthy forest ground (`Bg: #272e33`, `PaneBg: #2d353b`, `Panel: #343f44`, `Border: #475258`) paired with signature sage green (`Accent: #a7c080`, `BorderFocus: #a7c080`), warm cream text (`#d3c6aa`), muted grey-green (`#7a8478`), warm yellow (`Warning: #dbbc7f`), soft red (`Danger: #e67e80`), and soft purple (`Purple: #d699b6`).
 - **Surface layering & contrast**: Respects the `Bg < PaneBg < Panel < Border` luminance hierarchy. High contrast on headers (`AppTitleFg: #272e33` on `#a7c080` gives 6.88:1), crisp text readability (7.38:1 on pane bg), and a strictly monotonic 5-step heatmap ramp (`#343f44`, `#3d5248`, `#516f58`, `#78a06f`, `#a7c080`).
 
+## Scheduled tasks (2026-09-03)
+
+Branch `feat/schedule-tasks` starts at `upstream/main` (`85d8699`), independently
+of task editing. Architecture review confirmed that `Task.Date` already owns
+the scheduled day, Today selects equality with the local date, and Overdue
+selects unfinished earlier dates. No model or JSON migration is needed.
+
+- A pure `parseTaskInput` helper accepts `title [MM-DD] [HH:MM]`, preserving
+  the legacy time-only syntax and internal title whitespace. Date-only input
+  is a task; a valid trailing time makes an appointment. Dates choose the next
+  valid occurrence including today; February 29 can advance to a later leap
+  year. Invalid calendar dates retain the input and show a validation error.
+- `Shift+C` switches the Today pane to Upcoming, sorted by date, time, and
+  creation time. The Notes binding still clears the board. Simple mode also
+  supports Upcoming; its current combined list is restored on return.
+- Upcoming rows show the full scheduled date through the shared row renderer.
+  Adding selects the corresponding current/future view and the new task ID.
+  Important/undone filters apply to Upcoming; simple mode now supports them too.
+- Tick and resize handling clamp selections and scroll offsets. Delete
+  confirmations retain the item identity and cancel if a date rollover
+  changed the selected item, including notes in the simple combined list.
+- Parser and view work were delegated independently, then integrated. Added
+  tests cover parsing, leap years, local-date boundaries, list transitions,
+  selection/actions, rendering dimensions, persistence, and report boundaries.
+  README documents the syntax, year resolution, and contextual C binding.
+
+Validation limitation: Go is unavailable in this environment, and downloading
+the toolchain was blocked by network access. The Go tests, build, vet, and
+gofmt must still be run in a Go 1.26.3 environment. Static review and
+`git diff --check` were performed; these do not substitute for executable tests.
