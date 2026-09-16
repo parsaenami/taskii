@@ -85,65 +85,288 @@ func TestSetThemeByName(t *testing.T) {
 	}
 }
 
-func TestThemePickerFlow(t *testing.T) {
+func TestSettingsThemeSectionFlow(t *testing.T) {
 	app := NewApp(Options{})
+	app.noPersist = true
 	app.width = 100
 	app.height = 30
 	app.now = func() time.Time { return time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC) }
 
-	// Open theme picker with 'T' (Shift+T) even when notes are expanded
+	// 'S' opens the settings modal even when notes are expanded; the Theme
+	// section is then reached through the nav column.
 	app.notesExpanded = true
-	m, _ := app.updateNormal(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
+	m, _ := app.updateNormal(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'S'}})
 	a := m.(App)
-	if a.mode != modeThemePicker {
-		t.Fatalf("expected modeThemePicker when notes are expanded, got %v", a.mode)
+	if a.mode != modeSettings {
+		t.Fatalf("expected modeSettings when notes are expanded, got %v", a.mode)
 	}
+	a.settings.section = sectionTheme
+	a.settings.focus = focusSettingsContent
 
 	// Filter themes by "gruv"
-	a.themeFilter.SetValue("gruv")
-	a.filterThemes("gruv")
-	if len(a.themeMatches) == 0 {
+	a.settings.themeFilter.SetValue("gruv")
+	a.settings.filterThemes("gruv")
+	if len(a.settings.themeMatches) == 0 {
 		t.Fatalf("expected matches for 'gruv', got 0")
 	}
 
 	// Navigate down
-	origCursor := a.themeCursor
-	m, _ = a.updateThemePicker(tea.KeyMsg{Type: tea.KeyDown})
+	origCursor := a.settings.themeCursor
+	m, _ = a.updateSettings(tea.KeyMsg{Type: tea.KeyDown})
 	a = m.(App)
-	if len(a.themeMatches) > 1 && a.themeCursor == origCursor && a.themeCursor < len(a.themeMatches)-1 {
+	if len(a.settings.themeMatches) > 1 && a.settings.themeCursor == origCursor {
 		t.Errorf("expected themeCursor to move down")
 	}
 
-	// Render modal and check dimensions
-	modal := a.renderThemePickerModal()
-	if modal == "" {
-		t.Errorf("renderThemePickerModal returned empty string")
-	}
-	modalLines := strings.Split(modal, "\n")
-	if len(modalLines) != 16 {
-		t.Errorf("expected 16 modal lines, got %d", len(modalLines))
-	}
-	for i, l := range modalLines {
-		w := lipgloss.Width(l)
-		if w != 56 {
-			t.Errorf("modal line %d width = %d, expected 56: %q", i, w, l)
-		}
-	}
+	assertSettingsModalGeometry(t, a)
 
-	view := a.View()
-	lines := strings.Split(view, "\n")
-	for i, l := range lines {
-		w := lipgloss.Width(l)
-		if w != a.width {
-			t.Errorf("line %d width = %d, expected %d", i, w, a.width)
-		}
-	}
-
-	// Cancel with esc
-	m, _ = a.updateThemePicker(tea.KeyMsg{Type: tea.KeyEsc})
+	// Cancel with esc restores the pre-modal theme.
+	m, _ = a.updateSettings(tea.KeyMsg{Type: tea.KeyEsc})
 	a = m.(App)
 	if a.mode != modeNormal {
 		t.Errorf("expected modeNormal after Esc, got %v", a.mode)
+	}
+	if got := currentTheme().Name; got != a.settings.origTheme {
+		t.Errorf("Esc left theme %q, expected restore to %q", got, a.settings.origTheme)
+	}
+}
+
+func TestSettingsChoiceSurvivesClose(t *testing.T) {
+	// Regression: choosing a layout/theme then closing the modal used to
+	// roll the choice back, because Esc restored the values captured when
+	// the modal OPENED. The choice persisted to disk but not in memory, so
+	// it only appeared after a restart.
+	t.Run("layout", func(t *testing.T) {
+		app := NewApp(Options{})
+		app.noPersist = true
+		app.width, app.height = 100, 30
+		app.layout = layoutTasksLeft
+
+		app.openSettings()
+		app.settings.section = sectionLayout
+		app.settings.focus = focusSettingsContent
+
+		// Move to another layout and choose it.
+		m, _ := app.updateSettings(tea.KeyMsg{Type: tea.KeyDown})
+		a := m.(App)
+		want := allLayouts[a.settings.layoutCursor]
+		m, _ = a.updateSettings(tea.KeyMsg{Type: tea.KeyEnter})
+		a = m.(App)
+
+		// Closing must keep it.
+		m, _ = a.updateSettings(tea.KeyMsg{Type: tea.KeyEsc})
+		a = m.(App)
+		if a.layout != want {
+			t.Errorf("layout after choose+esc = %v, expected %v", a.layout, want)
+		}
+	})
+
+	t.Run("theme", func(t *testing.T) {
+		app := NewApp(Options{})
+		app.noPersist = true
+		app.width, app.height = 100, 30
+
+		app.openSettings()
+		app.settings.section = sectionTheme
+		app.settings.focus = focusSettingsContent
+
+		m, _ := app.updateSettings(tea.KeyMsg{Type: tea.KeyDown})
+		a := m.(App)
+		want := a.settings.themeMatches[a.settings.themeCursor].Name
+		m, _ = a.updateSettings(tea.KeyMsg{Type: tea.KeyEnter})
+		a = m.(App)
+
+		m, _ = a.updateSettings(tea.KeyMsg{Type: tea.KeyEsc})
+		a = m.(App)
+		if got := currentTheme().Name; got != want {
+			t.Errorf("theme after choose+esc = %q, expected %q", got, want)
+		}
+	})
+
+	t.Run("esc still discards unchosen previews", func(t *testing.T) {
+		// The re-baselining must not defeat cancel: previews made after the
+		// last explicit choice are still discarded.
+		app := NewApp(Options{})
+		app.noPersist = true
+		app.width, app.height = 100, 30
+		app.layout = layoutTasksLeft
+
+		app.openSettings()
+		app.settings.section = sectionLayout
+		app.settings.focus = focusSettingsContent
+
+		// Choose one layout...
+		m, _ := app.updateSettings(tea.KeyMsg{Type: tea.KeyDown})
+		a := m.(App)
+		chosen := allLayouts[a.settings.layoutCursor]
+		m, _ = a.updateSettings(tea.KeyMsg{Type: tea.KeyEnter})
+		a = m.(App)
+
+		// ...then preview a different one WITHOUT choosing it.
+		m, _ = a.updateSettings(tea.KeyMsg{Type: tea.KeyDown})
+		a = m.(App)
+		if a.layout == chosen {
+			t.Fatalf("preview did not move off the chosen layout")
+		}
+
+		m, _ = a.updateSettings(tea.KeyMsg{Type: tea.KeyEsc})
+		a = m.(App)
+		if a.layout != chosen {
+			t.Errorf("esc after an unchosen preview = %v, expected the last chosen %v",
+				a.layout, chosen)
+		}
+	})
+}
+
+// TestThemeLayoutShortcutsRemoved pins the decision that theme and layout are
+// reachable ONLY through the Settings modal: the old top-level `t` (cycle
+// theme), `T` (browse themes) and `L` (cycle layout) bindings must be inert
+// on the main page, in simple mode, and while the Notes board is expanded.
+func TestThemeLayoutShortcutsRemoved(t *testing.T) {
+	press := func(a App, r rune) App {
+		m, _ := a.updateNormal(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		return m.(App)
+	}
+
+	for _, tc := range []struct {
+		name     string
+		expanded bool
+		simple   bool
+	}{
+		{"normal", false, false},
+		{"notes expanded", true, false},
+		{"simple mode", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := NewApp(Options{})
+			base.noPersist = true
+			base.width, base.height = 100, 30
+			base.now = func() time.Time { return time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC) }
+			base.notesExpanded = tc.expanded
+			base.simple = tc.simple
+			base.layout = layoutTasksLeft
+			startTheme := currentTheme().Name
+
+			for _, r := range []rune{'t', 'T', 'L'} {
+				a := press(base, r)
+				if a.mode != modeNormal {
+					t.Errorf("%q opened mode %v, expected it to be inert", r, a.mode)
+				}
+				if a.layout != layoutTasksLeft {
+					t.Errorf("%q changed layout to %v", r, a.layout)
+				}
+				if got := currentTheme().Name; got != startTheme {
+					t.Errorf("%q changed theme to %q, expected %q", r, got, startTheme)
+					setThemeByName(startTheme)
+				}
+			}
+		})
+	}
+}
+
+func TestSettingsSectionNavigation(t *testing.T) {
+	app := NewApp(Options{})
+	app.noPersist = true
+	app.width = 100
+	app.height = 30
+	app.now = func() time.Time { return time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC) }
+
+	app.openSettings()
+	if app.settings.section != sectionPomodoro || app.settings.focus != focusSettingsNav {
+		t.Fatalf("expected to open on Pomodoro nav, got section=%v focus=%v",
+			app.settings.section, app.settings.focus)
+	}
+
+	// Every section renders at the modal's fixed geometry.
+	for _, sec := range []settingsSection{sectionPomodoro, sectionLayout, sectionTheme, sectionAbout} {
+		app.settings.section = sec
+		assertSettingsModalGeometry(t, app)
+	}
+
+	// Down through the nav column reaches About and wraps.
+	app.settings.section = sectionPomodoro
+	a := app
+	for i := 0; i < sectionCount; i++ {
+		m, _ := a.updateSettings(tea.KeyMsg{Type: tea.KeyDown})
+		a = m.(App)
+	}
+	if a.settings.section != sectionPomodoro {
+		t.Errorf("expected nav to wrap back to Pomodoro, got %v", a.settings.section)
+	}
+
+	// About has no content cursor, so right/enter must not trap focus there.
+	a.settings.section = sectionAbout
+	m, _ := a.updateSettings(tea.KeyMsg{Type: tea.KeyRight})
+	a = m.(App)
+	if a.settings.focus != focusSettingsNav {
+		t.Errorf("expected focus to stay in nav for About, got %v", a.settings.focus)
+	}
+}
+
+func TestSettingsLayoutPreviewAndChoose(t *testing.T) {
+	app := NewApp(Options{})
+	app.noPersist = true
+	app.width = 100
+	app.height = 30
+	app.now = func() time.Time { return time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC) }
+	app.layout = layoutTasksLeft
+
+	app.openSettings()
+	app.settings.section = sectionLayout
+	app.settings.focus = focusSettingsContent
+
+	// Moving the cursor previews the layout live, without committing it.
+	m, _ := app.updateSettings(tea.KeyMsg{Type: tea.KeyDown})
+	a := m.(App)
+	want := allLayouts[a.settings.layoutCursor]
+	if a.layout != want {
+		t.Errorf("expected live preview of %v, got %v", want, a.layout)
+	}
+	if a.settings.layoutChosen != layoutTasksLeft {
+		t.Errorf("preview must not commit: chosen = %v", a.settings.layoutChosen)
+	}
+
+	// Enter commits it.
+	m, _ = a.updateSettings(tea.KeyMsg{Type: tea.KeyEnter})
+	a = m.(App)
+	if a.settings.layoutChosen != want {
+		t.Errorf("expected chosen = %v, got %v", want, a.settings.layoutChosen)
+	}
+
+	// Esc after a preview-only move restores the layout that was in effect
+	// when the modal opened.
+	b := app
+	b.settings.focus = focusSettingsContent
+	m, _ = b.updateSettings(tea.KeyMsg{Type: tea.KeyDown})
+	b = m.(App)
+	m, _ = b.updateSettings(tea.KeyMsg{Type: tea.KeyEsc})
+	b = m.(App)
+	if b.layout != layoutTasksLeft {
+		t.Errorf("expected Esc to restore layoutTasksLeft, got %v", b.layout)
+	}
+}
+
+// assertSettingsModalGeometry pins the modal to its fixed box: every line
+// exactly settingsModalWidth cells wide, and the composed page still exactly
+// the terminal width. Both have regressed before from off-by-one padding in
+// the hand-built border.
+func assertSettingsModalGeometry(t *testing.T, a App) {
+	t.Helper()
+	modal := a.renderSettingsModal()
+	if modal == "" {
+		t.Fatalf("renderSettingsModal returned empty string")
+	}
+	for i, l := range strings.Split(modal, "\n") {
+		if w := lipgloss.Width(l); w != settingsModalWidth {
+			t.Errorf("section %v: modal line %d width = %d, expected %d: %q",
+				a.settings.section, i, w, settingsModalWidth, l)
+		}
+	}
+	for i, l := range strings.Split(a.View(), "\n") {
+		if w := lipgloss.Width(l); w != a.width {
+			t.Errorf("section %v: view line %d width = %d, expected %d",
+				a.settings.section, i, w, a.width)
+		}
 	}
 }
 

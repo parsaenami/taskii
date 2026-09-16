@@ -77,6 +77,17 @@ func dimComponent(s string, factor float64) string {
 	return strconv.Itoa(v)
 }
 
+// overlayModal places any modal box (built with renderPane, so it already
+// carries its own title/border) centered over the already fully-rendered
+// page, with the page dimmed underneath so the app stays visible behind the
+// modal instead of being replaced by a solid backdrop. Every modal in the
+// app (settings, theme picker, ...) shares this one compositing path so they
+// look and behave identically.
+func overlayModal(page, modal string, width, height int) string {
+	dimmed := dimANSI(page, 0.45)
+	return compositeOver(dimmed, modal, width, height)
+}
+
 // compositeOver overlays `top` (a small rectangular block, e.g. a modal),
 // centered, on top of `base` (a full page already padded to width x height).
 // Unlike lipgloss.Place, which pads its whitespace with a solid fill color,
