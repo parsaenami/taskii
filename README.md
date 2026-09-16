@@ -78,7 +78,8 @@ taskii --simple   # single-pane view: greeting + one combined list of tasks, ove
 | `p` | start/pause Pomodoro |
 | `r` | reset Pomodoro phase |
 | `n` | skip Pomodoro phase |
-| `t` | cycle color theme |
+| `t` | cycle next curated color theme |
+| `T` / `shift+t` | open interactive theme browser (340+ themes, fuzzy search & live preview) |
 | `L` | cycle layout |
 | `S` | open settings |
 | `q` / `ctrl+c` | quit |
@@ -91,8 +92,52 @@ On the Reports pane, `←/→` (or `h/l`) switch between the Week, Month, and Co
 - **Notes** — a simple multi-line notes board, expandable to full screen.
 - **Pomodoro timer** — start, pause, reset, and skip work/break phases.
 - **Reports** — completion progress, a 7-day/monthly bar chart, and a contribution heatmap.
-- **Themes** — seven built-in color themes (Tokyo Night, Dracula, Nord, Light, Ember, Monokai, Everforest), cycled with `t` and persisted between runs.
+- **Themes** — 7 curated core themes cycled with `t`, 340+ terminal themes accessible via interactive fuzzy-search browser (`T` / `shift+t`), and extensible custom JSON/JSONL theme support.
 - **Layouts** — multiple pane arrangements, cycled with `L`.
+
+## Custom Themes
+
+You can add your own custom palettes by placing `.json` or `.jsonl` files in any of the following directories:
+- **Project local**: `data/themes/`
+- **Linux**: `$XDG_CONFIG_HOME/taskii/themes/` or `~/.config/taskii/themes/`
+- **macOS**: `~/Library/Application Support/taskii/themes/` or `~/.config/taskii/themes/`
+- **Windows**: `%AppData%\taskii\themes\`
+
+### Example: Taskii Theme Format (`theme.json`)
+```json
+{
+  "name": "Custom Palette",
+  "bg": "#121815",
+  "pane_bg": "#18201c",
+  "panel": "#202a25",
+  "border": "#31423a",
+  "border_focus": "#52b788",
+  "text": "#d8f3dc",
+  "muted": "#74c69d",
+  "accent": "#52b788",
+  "green": "#74c69d",
+  "warning": "#ffe6a7",
+  "danger": "#e63946",
+  "purple": "#b5838d"
+}
+```
+
+### Example: Terminal / Bubbletint Tint Format (`tint.json`)
+```json
+{
+  "display_name": "My Terminal Tint",
+  "id": "my_tint",
+  "dark": true,
+  "bg": "#1a1b26",
+  "fg": "#c0caf5",
+  "red": "#f7768e",
+  "green": "#9ece6a",
+  "yellow": "#e0af68",
+  "blue": "#7aa2f7"
+}
+```
+
+*(You can also bundle multiple themes into a single JSON array or a `.jsonl` file with one JSON theme object per line).*
 
 ## Development
 

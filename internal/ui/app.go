@@ -228,7 +228,7 @@ var expandedAllowedKeys = map[string]bool{
 	"a": true, "enter": true, "d": true, "C": true, "e": true,
 	"up": true, "k": true, "down": true, "j": true,
 	// App-wide.
-	"q": true, "ctrl+c": true, "t": true, "S": true, "L": true,
+	"q": true, "ctrl+c": true, "S": true,
 }
 
 // updateSimple is the whole key map for --simple: one list, one selection,
@@ -291,15 +291,8 @@ func (a App) updateSimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
-	case "t":
-		name := cycleTheme()
-		a.status = "Theme: " + name
-		a.saveSettings()
-		return a, nil
-
 	case "S":
-		a.openSettings()
-		return a, nil
+		return a, a.openSettings()
 	}
 	return a, nil
 }
@@ -544,24 +537,8 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.pomo.running = false
 		return a, notifyPhaseChange(a.pomo.phase)
 
-	case "t":
-		name := cycleTheme()
-		a.status = "Theme: " + name
-		a.saveSettings()
-		return a, nil
-
 	case "S":
-		a.openSettings()
-		return a, nil
-
-	case "L":
-		a.layout = a.layout.next()
-		a.status = "Layout: " + a.layout.String()
-		// Selections can fall outside the new viewport: the layouts differ in
-		// pane height, so a row visible in one may not exist in another.
-		a.clampSelections()
-		a.saveSettings()
-		return a, nil
+		return a, a.openSettings()
 	}
 
 	return a, nil
@@ -1324,7 +1301,7 @@ func (a App) helpGroups() []helpGroup {
 			{"", []helpKey{
 				{"a", "add " + what}, {"tab", "switch to " + map[bool]string{true: "task", false: "note"}[a.simpleNoteMode]},
 				{"space/enter", "toggle/edit"}, {"d", "delete"}, {"i", "important"},
-				{"↑/↓ j/k", "navigate"}, {"t", "theme"}, {"q", "quit"},
+				{"↑/↓ j/k", "navigate"}, {"S", "settings"}, {"q", "quit"},
 			}},
 		}
 	}
@@ -1349,10 +1326,14 @@ func (a App) helpGroups() []helpGroup {
 		}
 	}
 	if a.mode == modeAdding {
+		// One hint for both annotations. The time is position-sensitive
+		// (last field only) and the tag isn't, which is worth saying since
+		// it's the one rule that isn't guessable.
+		hint := "#tag anywhere  ·  HH:MM or HH:MM-HH:MM at the end"
 		return []helpGroup{
 			{"", []helpKey{
-				{"enter", "confirm"}, {"esc", "cancel"},
-				{"", "end with HH:MM to add it as an appointment"},
+				{"enter", "save"}, {"esc", "cancel"},
+				{"", hint},
 			}},
 		}
 	}
@@ -1372,7 +1353,7 @@ func (a App) helpGroups() []helpGroup {
 			{"Notes", notesKeys},
 			{"View", viewKeys},
 			{"App", []helpKey{
-				{"t", "theme"}, {"S", "settings"}, {"L", "layout"}, {"q", "quit"},
+				{"S", "settings"}, {"q", "quit"},
 			}},
 		}
 	}
@@ -1385,7 +1366,7 @@ func (a App) helpGroups() []helpGroup {
 			}},
 			{"View", []helpKey{{"tab", "switch pane"}}},
 			{"App", []helpKey{
-				{"t", "theme"}, {"S", "settings"}, {"L", "layout"}, {"q", "quit"},
+				{"S", "settings"}, {"q", "quit"},
 			}},
 		}
 	}
@@ -1408,7 +1389,7 @@ func (a App) helpGroups() []helpGroup {
 		// Pomodoro's keys aren't listed here — they're rendered inside the
 		// Pomodoro pane itself, next to the thing they control.
 		{"App", []helpKey{
-			{"t", "theme"}, {"S", "settings"}, {"L", "layout"}, {"q", "quit"},
+			{"S", "settings"}, {"q", "quit"},
 		}},
 	}
 }
@@ -1489,7 +1470,7 @@ func (a App) View() string {
 
 	page := a.renderPage()
 	if a.mode == modeSettings {
-		return overlaySettingsModal(page, a.settings, a.width, a.height)
+		return overlayModal(page, a.renderSettingsModal(), a.width, a.height)
 	}
 	return page
 }
@@ -1508,133 +1489,103 @@ func (a App) renderPage() string {
 		helpLine += strings.Repeat("\n", want-lipgloss.Height(helpLine))
 	}
 
+	var page string
 	if a.simple {
-		return a.assemblePage(a.renderSimple(), helpLine)
-	}
+		page = a.assemblePage(a.renderSimple(), helpLine)
+	} else {
+		g := a.geometry()
+		if a.notesExpanded && a.focus == focusNotes {
+			page = a.assemblePage(a.renderNotesPane(g), helpLine)
+		} else {
+			leftWidth := g.taskWidth
+			rightWidth := g.infoWidth
+			todayHeight := g.todayHeight
+			overdueHeight := g.overdueHeight
 
-	g := a.geometry()
+			filters := filterLabel(a.filterImportant, a.filterUndone)
 
-	// Expanded Notes replaces the whole body — no other pane is built, since
-	// geometry gave them all zero height.
-	if a.notesExpanded && a.focus == focusNotes {
-		return a.assemblePage(a.renderNotesPane(g), helpLine)
-	}
+			today := a.todayTasks()
+			todayVisible := a.visibleRowsFor(focusToday)
+			todayBody := renderTaskList(today, a.todaySelected, a.todayScroll, todayVisible, a.focus == focusToday, false, leftWidth-4)
+			if a.mode == modeAdding {
+				a.input.TextStyle = lipgloss.NewStyle().Foreground(colorText).Background(colorPaneBg)
+				a.input.PlaceholderStyle = lipgloss.NewStyle().Foreground(colorMuted).Background(colorPaneBg)
+				a.input.PromptStyle = lipgloss.NewStyle().Foreground(colorAccent).Background(colorPaneBg)
+				a.input.Cursor.Style = lipgloss.NewStyle().Foreground(colorText).Background(colorPaneBg)
 
-	leftWidth := g.taskWidth
-	rightWidth := g.infoWidth
-	todayHeight := g.todayHeight
-	overdueHeight := g.overdueHeight
+				if field := a.inputFieldWidth(); lipgloss.Width(a.input.Placeholder) > field {
+					a.input.Placeholder = fitToWidth(a.input.Placeholder, field)
+				}
 
-	filters := filterLabel(a.filterImportant, a.filterUndone)
+				a.input.Width = 0
+				inputLine := inputPromptStyle.Render("+ ") + a.input.View()
+				if pad := (leftWidth - 4) - lipgloss.Width(inputLine); pad > 0 {
+					inputLine += lipgloss.NewStyle().Background(colorPaneBg).Render(strings.Repeat(" ", pad))
+				}
+				todayBody += "\n" + inputLine
+			}
+			todayPane := renderPane(fmt.Sprintf("Today (%d)%s", len(today), filters), todayBody, a.focus == focusToday, leftWidth, todayHeight)
 
-	today := a.todayTasks()
-	todayVisible := a.visibleRowsFor(focusToday)
-	todayBody := renderTaskList(today, a.todaySelected, a.todayScroll, todayVisible, a.focus == focusToday, false, leftWidth-4)
-	if a.mode == modeAdding {
-		// Set here rather than once in NewApp so these follow theme changes.
-		a.input.TextStyle = lipgloss.NewStyle().Foreground(colorText).Background(colorPaneBg)
-		a.input.PlaceholderStyle = lipgloss.NewStyle().Foreground(colorMuted).Background(colorPaneBg)
-		a.input.PromptStyle = lipgloss.NewStyle().Foreground(colorAccent).Background(colorPaneBg)
-		a.input.Cursor.Style = lipgloss.NewStyle().Foreground(colorText).Background(colorPaneBg)
+			overdue := a.overdueTasks()
+			overdueWidth := leftWidth
+			overdueVisible := a.visibleRowsFor(focusOverdue)
+			overdueBody := renderTaskList(overdue, a.overdueSelected, a.overdueScroll, overdueVisible, a.focus == focusOverdue, true, overdueWidth-4)
+			overduePane := renderPane(fmt.Sprintf("Overdue (%d)%s", len(overdue), filters), overdueBody, a.focus == focusOverdue, overdueWidth, overdueHeight)
 
-		// Clip the placeholder to the field. The widget truncates a typed
-		// *value* to Width but never its placeholder, so on a narrow pane the
-		// full hint text ran past the border — and then vanished to a correct
-		// width on the first keystroke, reading as the line resizing as soon
-		// as you started typing.
-		if field := a.inputFieldWidth(); lipgloss.Width(a.input.Placeholder) > field {
-			a.input.Placeholder = fitToWidth(a.input.Placeholder, field)
+			tasks := lipgloss.JoinVertical(lipgloss.Left, todayPane, overduePane)
+			if a.layout == layoutStacked {
+				tasks = lipgloss.JoinHorizontal(lipgloss.Top, todayPane, overduePane)
+			}
+
+			greetWidth, reportsWidth, pomoWidth := rightWidth, rightWidth, rightWidth
+			if a.layout == layoutStacked {
+				pomoWidth = a.width - greetWidth - reportsWidth
+			}
+
+			greetBody := renderGreeting(a.now(), a.username, greetWidth-4, g.greetHeight-2)
+			greetPane := renderPane("", greetBody, false, greetWidth, g.greetHeight)
+
+			report := stats.Compute(a.tasks, a.now())
+			reportsBody := renderReports(report, reportsWidth-4, g.reportsHeight-2, a.reportChart, a.focus == focusReports)
+			reportsPane := renderPane("Reports", reportsBody, a.focus == focusReports, reportsWidth, g.reportsHeight)
+
+			pomoBody := renderPomodoro(a.pomo, pomoWidth-4, g.pomoHeight-2)
+			pomoPane := renderPane("Pomodoro", pomoBody, false, pomoWidth, g.pomoHeight)
+
+			notesPane := a.renderNotesPane(g)
+
+			if a.layout == layoutStacked && notesPane != "" {
+				tasks = lipgloss.JoinHorizontal(lipgloss.Top, tasks, notesPane)
+			}
+
+			infoPanes := []string{greetPane, reportsPane, pomoPane}
+			if a.layout != layoutStacked && a.layout != layoutThreeColumn && notesPane != "" {
+				infoPanes = append(infoPanes, notesPane)
+			}
+
+			gutter := gutterColumn(lipgloss.Height(tasks))
+
+			var body string
+			switch a.layout {
+			case layoutTasksRight:
+				info := lipgloss.JoinVertical(lipgloss.Left, infoPanes...)
+				body = lipgloss.JoinHorizontal(lipgloss.Top, info, gutter, tasks)
+			case layoutStacked:
+				info := lipgloss.JoinHorizontal(lipgloss.Top, greetPane, reportsPane, pomoPane)
+				body = lipgloss.JoinVertical(lipgloss.Left, info, tasks)
+			case layoutThreeColumn:
+				info := lipgloss.JoinVertical(lipgloss.Left, infoPanes...)
+				body = lipgloss.JoinHorizontal(lipgloss.Top, info, gutter, tasks, gutter, notesPane)
+			default:
+				info := lipgloss.JoinVertical(lipgloss.Left, infoPanes...)
+				body = lipgloss.JoinHorizontal(lipgloss.Top, tasks, gutter, info)
+			}
+
+			page = a.assemblePage(body, helpLine)
 		}
-
-		// Render with Width unset and do the trailing fill ourselves. The
-		// widget's own padding differs between its two branches — the
-		// placeholder path pads to Width while the typed path pads to Width
-		// and *then* appends a cursor cell past it — so letting it size the
-		// line made the row jump wider the moment a key was pressed. Its
-		// padding also goes through TextStyle, emerging wrapped in SGR
-		// codes that a TrimRight(" ") can't strip back off.
-		//
-		// Width still matters for horizontal scrolling of long values, but
-		// that's consumed in Update (handleOverflow), not here, so clearing
-		// it at render time costs nothing. View has a value receiver, so
-		// this only touches the local copy used for this frame.
-		a.input.Width = 0
-		inputLine := inputPromptStyle.Render("+ ") + a.input.View()
-		if pad := (leftWidth - 4) - lipgloss.Width(inputLine); pad > 0 {
-			inputLine += lipgloss.NewStyle().Background(colorPaneBg).Render(strings.Repeat(" ", pad))
-		}
-		todayBody += "\n" + inputLine
-	}
-	todayPane := renderPane(fmt.Sprintf("Today (%d)%s", len(today), filters), todayBody, a.focus == focusToday, leftWidth, todayHeight)
-
-	overdue := a.overdueTasks()
-	// In the stacked layout Today, Overdue and Notes share the row equally
-	// (geometry gives Notes the rounding remainder); in the column layouts
-	// Today and Overdue are stacked at the same width.
-	overdueWidth := leftWidth
-	overdueVisible := a.visibleRowsFor(focusOverdue)
-	overdueBody := renderTaskList(overdue, a.overdueSelected, a.overdueScroll, overdueVisible, a.focus == focusOverdue, true, overdueWidth-4)
-	overduePane := renderPane(fmt.Sprintf("Overdue (%d)%s", len(overdue), filters), overdueBody, a.focus == focusOverdue, overdueWidth, overdueHeight)
-
-	tasks := lipgloss.JoinVertical(lipgloss.Left, todayPane, overduePane)
-	if a.layout == layoutStacked {
-		tasks = lipgloss.JoinHorizontal(lipgloss.Top, todayPane, overduePane)
 	}
 
-	// In the stacked layout the three info panes sit side by side, so the
-	// last one absorbs the width remainder from the /3 split; in the column
-	// layouts they're all the same width and the remainder is zero.
-	greetWidth, reportsWidth, pomoWidth := rightWidth, rightWidth, rightWidth
-	if a.layout == layoutStacked {
-		pomoWidth = a.width - greetWidth - reportsWidth
-	}
-
-	greetBody := renderGreeting(a.now(), a.username, greetWidth-4, g.greetHeight-2)
-	greetPane := renderPane("", greetBody, false, greetWidth, g.greetHeight)
-
-	report := stats.Compute(a.tasks, a.now())
-	reportsBody := renderReports(report, reportsWidth-4, g.reportsHeight-2, a.reportChart, a.focus == focusReports)
-	reportsPane := renderPane("Reports", reportsBody, a.focus == focusReports, reportsWidth, g.reportsHeight)
-
-	pomoBody := renderPomodoro(a.pomo, pomoWidth-4, g.pomoHeight-2)
-	pomoPane := renderPane("Pomodoro", pomoBody, false, pomoWidth, g.pomoHeight)
-
-	notesPane := a.renderNotesPane(g)
-
-	// In the stacked layout Notes is a third task-row column; in the
-	// three-column layout it's a column of its own; otherwise it's the last
-	// pane of the info column.
-	if a.layout == layoutStacked && notesPane != "" {
-		tasks = lipgloss.JoinHorizontal(lipgloss.Top, tasks, notesPane)
-	}
-
-	infoPanes := []string{greetPane, reportsPane, pomoPane}
-	if a.layout != layoutStacked && a.layout != layoutThreeColumn && notesPane != "" {
-		infoPanes = append(infoPanes, notesPane)
-	}
-
-	// The gutter between columns is a styled space, not a bare one: an
-	// unstyled space here would be a column of terminal-default background
-	// running the full height of the page.
-	gutter := gutterColumn(lipgloss.Height(tasks))
-
-	var body string
-	switch a.layout {
-	case layoutTasksRight:
-		info := lipgloss.JoinVertical(lipgloss.Left, infoPanes...)
-		body = lipgloss.JoinHorizontal(lipgloss.Top, info, gutter, tasks)
-	case layoutStacked:
-		info := lipgloss.JoinHorizontal(lipgloss.Top, greetPane, reportsPane, pomoPane)
-		body = lipgloss.JoinVertical(lipgloss.Left, info, tasks)
-	case layoutThreeColumn:
-		info := lipgloss.JoinVertical(lipgloss.Left, infoPanes...)
-		body = lipgloss.JoinHorizontal(lipgloss.Top, info, gutter, tasks, gutter, notesPane)
-	default:
-		info := lipgloss.JoinVertical(lipgloss.Left, infoPanes...)
-		body = lipgloss.JoinHorizontal(lipgloss.Top, tasks, gutter, info)
-	}
-
-	return a.assemblePage(body, helpLine)
+	return page
 }
 
 // assemblePage stacks the body, the status/prompt line and the help bar into
@@ -1743,4 +1694,13 @@ func (a App) assemblePage(body, helpLine string) string {
 		padLines(indentLines(helpLine, 1)),
 	)
 	return full
+}
+
+func padPanelLine(s string, w int, bg lipgloss.Color) string {
+	if pad := w - lipgloss.Width(s); pad > 0 {
+		return s + lipgloss.NewStyle().Background(bg).Render(strings.Repeat(" ", pad))
+	} else if pad < 0 {
+		return truncateANSI(s, w)
+	}
+	return s
 }

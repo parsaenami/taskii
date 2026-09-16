@@ -162,3 +162,38 @@ func truncateANSI(s string, w int) string {
 	}
 	return b.String()
 }
+
+// sliceANSIFrom drops the first skip display cells of s and returns the
+// rest, re-emitting whatever SGR codes were active at the cut point first
+// so the remainder keeps its original colors — used to preserve the page
+// content that sits past a modal's edge instead of discarding it.
+func sliceANSIFrom(s string, skip int) string {
+	if skip <= 0 {
+		return s
+	}
+	var active strings.Builder
+	width := 0
+	i := 0
+	for i < len(s) {
+		if s[i] == 0x1b {
+			j := i + 1
+			for j < len(s) && s[j] != 'm' {
+				j++
+			}
+			if j < len(s) {
+				j++
+			}
+			active.WriteString(s[i:j])
+			i = j
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		rw := runewidth.RuneWidth(r)
+		if width+rw > skip {
+			break
+		}
+		width += rw
+		i += size
+	}
+	return active.String() + s[i:]
+}

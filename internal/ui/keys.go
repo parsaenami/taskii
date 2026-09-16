@@ -19,6 +19,7 @@ type keyMap struct {
 	PomodoroReset  key.Binding
 	PomodoroSkip   key.Binding
 	Theme          key.Binding
+	ThemeBrowse    key.Binding
 }
 
 var keys = keyMap{
@@ -82,6 +83,10 @@ var keys = keyMap{
 	),
 	Theme: key.NewBinding(
 		key.WithKeys("t"),
-		key.WithHelp("t", "cycle theme"),
+		key.WithHelp("t", "next theme"),
+	),
+	ThemeBrowse: key.NewBinding(
+		key.WithKeys("T", "shift+t"),
+		key.WithHelp("T", "browse themes"),
 	),
 }
