@@ -7,7 +7,8 @@ import (
 	"taskii/internal/model"
 )
 
-const dateFormat = "2006-01-02"
+// dateFormat is an alias for the model package's canonical layout.
+const dateFormat = model.DateFormat
 
 type Progress struct {
 	Done  int
@@ -33,10 +34,18 @@ type HeatmapCell struct {
 // DayBar is one column of the daily bar chart: the day's full task count and
 // how many of them were completed. Done <= Total always, so a renderer can
 // draw one bar Total high and fill the bottom Done of it.
+//
+// DoneMigrated is the subset of Done that was carried forward from an earlier
+// day rather than scheduled for this one, so the renderer can split the
+// completed portion into two bands. It counts toward Done, NOT alongside it:
+// Done is still every task finished that day, and DoneMigrated <= Done.
+// Keeping it a subset rather than a sibling means Total == Done + open stays
+// true and no existing arithmetic has to change.
 type DayBar struct {
-	Date  time.Time
-	Done  int
-	Total int
+	Date         time.Time
+	Done         int
+	DoneMigrated int
+	Total        int
 }
 
 type Report struct {
@@ -57,10 +66,29 @@ func dayKey(t time.Time) string {
 	return t.Format(dateFormat)
 }
 
+// activityDay is the day a task's work belongs to for reporting: the day it
+// was FINISHED if it's done, otherwise the day it's scheduled for.
+//
+// These diverge whenever a task outlives its scheduled day — carried forward
+// out of Overdue, or held in Today's list by a deadline — and every report
+// here asks "what happened on day X", not "what was scheduled for day X".
+// Keying on Date alone credited such a completion to the past: the old day's
+// bar silently turned done while the day the work actually happened gained
+// nothing, and neither the heatmap nor the streak registered it at all.
+//
+// DoneAt is only set by the toggle, so tasks completed before that field
+// existed fall back to Date rather than dropping out of the reports.
+func activityDay(t model.Task) string {
+	if t.Done && t.DoneAt != nil {
+		return dayKey(*t.DoneAt)
+	}
+	return t.Date
+}
+
 func progressFor(tasks []model.Task, in func(d string) bool) Progress {
 	var p Progress
 	for _, t := range tasks {
-		if !in(t.Date) {
+		if !in(activityDay(t)) {
 			continue
 		}
 		p.Total++
@@ -101,17 +129,30 @@ func Compute(tasks []model.Task, now time.Time) Report {
 // dayBars builds one DayBar per calendar day from start to end inclusive,
 // including days with no tasks so the chart's x-axis has no gaps.
 func dayBars(tasks []model.Task, start, end time.Time) []DayBar {
-	type counts struct{ done, total int }
+	type counts struct{ done, doneMigrated, total int }
 	byDate := map[string]*counts{}
-	for _, t := range tasks {
-		c := byDate[t.Date]
+	at := func(date string) *counts {
+		c := byDate[date]
 		if c == nil {
 			c = &counts{}
-			byDate[t.Date] = c
+			byDate[date] = c
 		}
+		return c
+	}
+
+	for _, t := range tasks {
+		day := activityDay(t)
+		c := at(day)
 		c.total++
 		if t.Done {
 			c.done++
+			// "Carried" means the work reached this day from an earlier one,
+			// which is true both of a migrated task and of one a deadline
+			// held open past its scheduled date — from the chart's point of
+			// view they're the same thing: today's completion of older work.
+			if t.IsMigrated() || day != t.Date {
+				c.doneMigrated++
+			}
 		}
 	}
 
@@ -124,7 +165,7 @@ func dayBars(tasks []model.Task, start, end time.Time) []DayBar {
 	for !d.After(last) {
 		bar := DayBar{Date: d}
 		if c := byDate[dayKey(d)]; c != nil {
-			bar.Done, bar.Total = c.done, c.total
+			bar.Done, bar.DoneMigrated, bar.Total = c.done, c.doneMigrated, c.total
 		}
 		out = append(out, bar)
 		d = d.AddDate(0, 0, 1)
@@ -140,7 +181,7 @@ func computeHeatmap(tasks []model.Task, now time.Time, weeks int) []HeatmapCell 
 	byDate := map[string]int{}
 	for _, t := range tasks {
 		if t.Done {
-			byDate[t.Date]++
+			byDate[activityDay(t)]++
 		}
 	}
 
@@ -199,7 +240,7 @@ func computeStreak(tasks []model.Task, now time.Time) int {
 	doneByDate := map[string]int{}
 	for _, t := range tasks {
 		if t.Done {
-			doneByDate[t.Date]++
+			doneByDate[activityDay(t)]++
 		}
 	}
 
