@@ -163,7 +163,6 @@ func truncateANSI(s string, w int) string {
 	return b.String()
 }
 
-
 // sliceANSIFrom drops the first skip display cells of s and returns the
 // rest, re-emitting whatever SGR codes were active at the cut point first
 // so the remainder keeps its original colors — used to preserve the page
