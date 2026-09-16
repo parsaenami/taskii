@@ -38,7 +38,9 @@ const (
 	modeSettings
 )
 
-const dateFormat = "2006-01-02"
+// dateFormat is an alias for the model package's canonical layout, kept so
+// the many call sites in this package stay short.
+const dateFormat = model.DateFormat
 
 type App struct {
 	tasks []model.Task
@@ -81,10 +83,15 @@ type App struct {
 	simpleScroll   int
 	simpleNoteMode bool
 
-	input     textinput.Model
-	err       string
-	status    string
-	noPersist bool
+	input textinput.Model
+	// taskEditID is the task the inline input is editing, or "" when the
+	// input is adding a new one. Held as an ID rather than a list index
+	// because both task lists are sorted and re-derived every frame — an
+	// index would point at a different row the moment a title changes.
+	taskEditID string
+	err        string
+	status     string
+	noPersist  bool
 
 	username string
 	layout   layout
@@ -152,7 +159,7 @@ func NewApp(opts Options) App {
 	}
 
 	ti := textinput.New()
-	ti.Placeholder = "Title, or end with HH:MM to add it as an appointment"
+	ti.Placeholder = "Title  ·  #tag  ·  HH:MM[-HH:MM]"
 	ti.CharLimit = 120
 
 	ta := textarea.New()
@@ -259,6 +266,7 @@ func (a App) updateSimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return a.startNoteEdit(-1)
 		}
 		a.mode = modeAdding
+		a.taskEditID = ""
 		a.input.SetValue("")
 		a.input.Focus()
 		return a, textinput.Blink
@@ -273,6 +281,14 @@ func (a App) updateSimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return a.startNoteEdit(e.noteIndex)
 			}
 			return a, nil
+		}
+		// Enter edits, space toggles — same split as the full layout's task
+		// lists, so the two modes don't teach different habits. Overdue rows
+		// ARE editable here, unlike the full layout: simple mode has one
+		// merged list and one input line, so there's no second pane for the
+		// cursor to land in by mistake.
+		if msg.String() == "enter" {
+			return a.startTaskEdit(&e.task)
 		}
 		a.toggleTaskByID(e.task.ID)
 		return a, nil
@@ -446,6 +462,7 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return a, nil
 		case focusToday:
 			a.mode = modeAdding
+			a.taskEditID = ""
 			a.input.SetValue("")
 			a.input.Focus()
 			return a, textinput.Blink
@@ -458,12 +475,30 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if a.focus == focusReports {
 			return a, nil
 		}
-		// On the notes board enter opens the selected note for editing;
-		// on the task lists it toggles done.
+		// Enter opens the selected item for editing; space toggles a task
+		// done. Editing is Today-only: the inline input renders inside the
+		// Today pane (the same line modeAdding uses), so an edit started
+		// from Overdue would drop the cursor into a different box than the
+		// row being edited. Carry the task forward with space first, then
+		// edit it in Today.
 		if a.focus == focusNotes {
 			if msg.String() == "enter" && len(a.notes) > 0 {
 				return a.startNoteEdit(a.notesSelected)
 			}
+			return a, nil
+		}
+		if msg.String() == "enter" {
+			if a.focus != focusToday {
+				return a, nil
+			}
+			return a.startTaskEdit(a.selectedTask())
+		}
+		// Space means "done" in Today, but "carry this forward to today" in
+		// Overdue — there's nothing useful about ticking off a task on a day
+		// that has already passed, whereas pulling it onto today's plate is
+		// the action that pane is actually for.
+		if a.focus == focusOverdue {
+			a.migrateSelected()
 			return a, nil
 		}
 		a.toggleSelected()
@@ -544,13 +579,70 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return a, nil
 }
 
+// startTaskEdit opens the inline input pre-filled with the selected task's
+// title, reusing modeAdding's widget and render path rather than splicing a
+// live input into the middle of an already-styled list row.
+func (a App) startTaskEdit(t *model.Task) (tea.Model, tea.Cmd) {
+	if t == nil {
+		return a, nil
+	}
+	a.mode = modeAdding
+	a.taskEditID = t.ID
+	a.input.SetValue(taskInputText(*t, a.now()))
+	a.input.Focus()
+	a.input.CursorEnd()
+	return a, textinput.Blink
+}
+
+// taskInputText renders a task back into the annotation syntax parseTaskInput
+// reads, so opening the editor and pressing enter unchanged is a no-op. Every
+// annotation has to appear here: one left out would be silently dropped by
+// the re-parse on save, since applyTaskEdit assigns the whole set.
+// The due date is re-derived from `now` rather than echoed back verbatim, so
+// the editor shows what the task means TODAY: a "!3d" entered last week opens
+// as "!1d", and saving it unchanged keeps the same absolute deadline instead
+// of silently pushing it three days out.
+func taskInputText(t model.Task, now time.Time) string {
+	// Tags need no reconstruction: they were never removed from the title,
+	// so they're already in it, in the position they were typed.
+	val := t.Title
+	// The end-anchored annotations follow, since that's the only position
+	// parseTaskInput recognises them in.
+	if t.Time != "" {
+		val += " " + t.Time
+		if t.EndTime != "" {
+			val += "-" + t.EndTime
+		}
+	}
+	if days, ok := t.DaysUntilDue(now); dueDatesEnabled && ok {
+		if days < 0 {
+			// Echoed in the same "‼Nd" form the row shows, which
+			// parseDueField accepts — so an overdue task saved unchanged
+			// keeps its actual deadline instead of being rescheduled to
+			// today.
+			val += fmt.Sprintf(" ‼%dd", -days)
+		} else {
+			val += fmt.Sprintf(" !%dd", days)
+		}
+	}
+	return val
+}
+
 func (a App) updateAdding(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		a.mode = modeNormal
+		a.taskEditID = ""
 		a.input.Blur()
 		return a, nil
 	case "enter":
+		if a.taskEditID != "" {
+			a.applyTaskEdit(a.input.Value())
+			a.mode = modeNormal
+			a.taskEditID = ""
+			a.input.Blur()
+			return a, nil
+		}
 		a.addTask(a.input.Value())
 		a.input.SetValue("")
 		return a, nil
@@ -727,7 +819,16 @@ func (a App) updateNoteEditing(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case "enter":
+		adding := a.noteEditIndex < 0
 		a.saveNote(a.noteInput.Value())
+		if adding {
+			// Stay in the editor for the next note, the same way modeAdding
+			// keeps the task input open — a board is usually filled several
+			// bullets at a time, and esc is the deliberate way out.
+			a.noteEditIndex = -1
+			a.noteInput.SetValue("")
+			return a, nil
+		}
 		a.mode = modeNormal
 		a.noteInput.Blur()
 		return a, nil
@@ -853,35 +954,223 @@ func (a *App) inputFieldWidth() int {
 	return w
 }
 
-func (a *App) addTask(raw string) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
+// applyTaskEdit writes the inline input back onto the task being edited,
+// re-parsing the trailing "HH:MM" the same way addTask does so an edit can
+// promote a task to an appointment or demote it back. An emptied title is
+// treated as a no-op rather than a delete: `d` is the deliberate way to
+// remove a task, and silently destroying one on a stray ctrl+u would be a
+// nasty surprise.
+func (a *App) applyTaskEdit(raw string) {
+	p, ok := parseTaskInput(raw)
+	if !ok {
 		return
 	}
-
-	title := raw
-	taskTime := ""
-	kind := model.KindTask
-	fields := strings.Fields(raw)
-	if len(fields) > 0 {
-		last := fields[len(fields)-1]
-		if isTimeLike(last) {
-			taskTime = last
-			kind = model.KindAppointment
-			title = strings.TrimSpace(strings.TrimSuffix(raw, last))
+	for i := range a.tasks {
+		if a.tasks[i].ID == a.taskEditID {
+			// Every annotation is assigned unconditionally, so deleting one
+			// from the text removes it from the task — an edit shows the
+			// whole annotation set, so what's on screen is what's stored.
+			a.tasks[i].Title = p.title
+			a.tasks[i].Time = p.time
+			a.tasks[i].EndTime = p.endTime
+			a.tasks[i].Tags = p.tags
+			// While deadlines are shelved, an edit must LEAVE an existing
+			// DueDate alone: the editor can't show it, so re-assigning from
+			// the parsed text would silently erase a deadline the user set
+			// while the feature was on.
+			if dueDatesEnabled {
+				a.tasks[i].DueDate = a.dueDateFrom(p)
+			}
+			a.tasks[i].Kind = p.kind
+			a.persist()
+			a.selectTaskByID(a.taskEditID)
+			return
 		}
 	}
-	if title == "" {
+}
+
+// parseTaskInput splits a raw entry into its title and, when the last field
+// looks like a clock time, an appointment time. Shared by addTask and
+// applyTaskEdit so the two can't disagree about what "ends with HH:MM" means.
+// dueDatesEnabled gates the whole "!Nd" deadline feature, which is shelved
+// for now rather than removed: the parser, the list/sort behaviour and the
+// chip renderer are all still here and still tested, and flipping this to
+// true turns them back on in one edit.
+//
+// While it's false, "!2d" is ordinary text in a title, no task is held in
+// Today's list by a deadline, and no chip is drawn. Any DueDate already in a
+// saved tasks.json is left untouched rather than erased, so pausing the
+// feature doesn't destroy data that was entered while it was on.
+const dueDatesEnabled = false
+
+// parsedTask is everything the annotation syntax can pull out of one line of
+// input. Grouped into a struct rather than returned as five loose values so
+// adding the next annotation doesn't churn every call site's signature.
+type parsedTask struct {
+	title   string
+	time    string
+	endTime string
+	kind    model.Kind
+	tags    []string
+	// dueInDays is the "!Nd" offset, and dueSet distinguishes "!0d" (due
+	// today) from no deadline at all — 0 is a meaningful value here.
+	dueInDays int
+	dueSet    bool
+}
+
+// parseTaskInput splits a raw entry into its title and annotations:
+//
+//	"standup 09:00"        → appointment at 09:00
+//	"standup 09:00-09:15"  → appointment from 09:00 to 09:15
+//	"fix login #api"       → task tagged "api", titled "fix login"
+//
+// The two annotation kinds are positional in different ways, which is why
+// they're handled separately rather than in one pass. A time is only
+// recognised as the LAST field — "meet 3 people at 09:00" shouldn't have its
+// "3" eaten — whereas "#tag" is self-delimiting and so is lifted from
+// anywhere in the line, which is what every tool with hashtags does.
+//
+// Returns ok=false when nothing but annotations was entered: a task has to
+// have a title to be worth storing.
+func parseTaskInput(raw string) (parsedTask, bool) {
+	out := parsedTask{kind: model.KindTask}
+
+	fields := strings.Fields(raw)
+	if len(fields) == 0 {
+		return out, false
+	}
+
+	// The end-anchored annotations are consumed first, since tag handling
+	// below doesn't remove words but the loop here does shift what "last"
+	// means. Both are accepted in either order ("... 09:00 !2d" and
+	// "... !2d 09:00"), because requiring a fixed order between two
+	// independent annotations is a rule with nothing behind it.
+	for len(fields) > 0 {
+		last := fields[len(fields)-1]
+		if days, ok := parseDueField(last); dueDatesEnabled && ok && !out.dueSet {
+			out.dueInDays = days
+			out.dueSet = true
+			fields = fields[:len(fields)-1]
+			continue
+		}
+		if start, end, isRange := parseTimeField(last); start != "" && out.time == "" {
+			out.time = start
+			out.kind = model.KindAppointment
+			if isRange {
+				out.endTime = end
+			}
+			fields = fields[:len(fields)-1]
+			continue
+		}
+		break
+	}
+
+	// Tags are RECORDED but left in place: "review #api docs" keeps reading
+	// as the sentence it was typed as, with the tag word merely coloured
+	// differently. Lifting them to the end would rewrite the user's phrasing
+	// on save, and an edit would then show text they never wrote.
+	seen := map[string]bool{}
+	for _, f := range fields {
+		// A bare "#" is punctuation, not a tag, and duplicates are collapsed
+		// so "#api fix #api" records one tag, not two.
+		if len(f) > 1 && strings.HasPrefix(f, "#") {
+			tag := strings.TrimPrefix(f, "#")
+			if key := strings.ToLower(tag); !seen[key] {
+				seen[key] = true
+				out.tags = append(out.tags, tag)
+			}
+		}
+	}
+
+	out.title = strings.Join(fields, " ")
+	if out.title == "" {
+		return parsedTask{kind: model.KindTask}, false
+	}
+	return out, true
+}
+
+// parseDueField recognises a trailing "!Nd" deadline: !0d is today, !1d
+// tomorrow, !Nd N days out. Any other shape returns false so the field stays
+// part of the title.
+//
+// A negative offset is rejected rather than treated as "already overdue":
+// there's no way to type a deadline in the past that isn't a typo, and an
+// overdue task arrives at that state by the clock moving, not by being
+// entered that way.
+func parseDueField(f string) (days int, ok bool) {
+	if f == "" || (f[len(f)-1] != 'd' && f[len(f)-1] != 'D') {
+		return 0, false
+	}
+	body := f[:len(f)-1]
+
+	// "‼Nd" is the overdue spelling the renderer produces, accepted on input
+	// so that opening an overdue task and saving it unchanged preserves its
+	// real deadline. Without this the editor would show a deadline the
+	// syntax couldn't express and quietly reschedule it on every save.
+	sign := 1
+	switch {
+	case strings.HasPrefix(body, "‼"):
+		sign, body = -1, strings.TrimPrefix(body, "‼")
+	case strings.HasPrefix(body, "!"):
+		body = strings.TrimPrefix(body, "!")
+	default:
+		return 0, false
+	}
+
+	n, err := strconv.Atoi(body)
+	// A negative offset typed by hand ("!-2d") is rejected: there's no way
+	// to mean a deadline in the past that isn't a typo, and a task reaches
+	// that state by the clock moving rather than by being entered that way.
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return sign * n, true
+}
+
+// parseTimeField recognises a trailing "HH:MM" or "HH:MM-HH:MM". The range
+// form returns both ends; a bare time returns the start only. Anything else
+// returns "" so the caller keeps the field as part of the title.
+//
+// A range whose end is not after its start is rejected outright rather than
+// silently kept: "09:00-09:00" is a zero-length event and "10:00-09:00" runs
+// backwards, and in both cases treating the text as a title is likelier to
+// match what the user meant than storing a nonsense duration.
+func parseTimeField(f string) (start, end string, isRange bool) {
+	if isTimeLike(f) {
+		return f, "", false
+	}
+	a, b, found := strings.Cut(f, "-")
+	if !found || !isTimeLike(a) || !isTimeLike(b) || b <= a {
+		return "", "", false
+	}
+	return a, b, true
+}
+
+// dueDateFrom resolves a parsed "!Nd" offset into the absolute date it means,
+// anchored to today. Returns "" when no deadline was given.
+func (a *App) dueDateFrom(p parsedTask) string {
+	if !p.dueSet {
+		return ""
+	}
+	return a.now().AddDate(0, 0, p.dueInDays).Format(dateFormat)
+}
+
+func (a *App) addTask(raw string) {
+	p, ok := parseTaskInput(raw)
+	if !ok {
 		return
 	}
 
 	t := model.Task{
 		ID:        strconv.FormatInt(a.now().UnixNano(), 36),
-		Title:     title,
+		Title:     p.title,
 		Done:      false,
-		Kind:      kind,
+		Kind:      p.kind,
 		Date:      a.now().Format(dateFormat),
-		Time:      taskTime,
+		Time:      p.time,
+		EndTime:   p.endTime,
+		Tags:      p.tags,
+		DueDate:   a.dueDateFrom(p),
 		CreatedAt: a.now(),
 	}
 
@@ -1048,6 +1337,37 @@ func (a *App) clampSelections() {
 		a.notesSelected = 0
 	}
 	a.syncScroll()
+}
+
+// migrateSelected carries the focused Overdue task onto today's list,
+// stamping OriginalDate the first time so the task's age keeps counting from
+// when it was FIRST scheduled rather than restarting at each migration.
+func (a *App) migrateSelected() {
+	list := a.currentList()
+	sel := a.currentSelected()
+	if sel < 0 || sel >= len(list) {
+		return
+	}
+	id := list[sel].ID
+	today := a.now().Format(dateFormat)
+	for i := range a.tasks {
+		if a.tasks[i].ID != id {
+			continue
+		}
+		// Only stamp on the FIRST migration. Overwriting on every carry
+		// forward would rebase the age counter and make deferring free,
+		// which is exactly what the age badge exists to discourage.
+		if a.tasks[i].OriginalDate == "" {
+			a.tasks[i].OriginalDate = a.tasks[i].Date
+		}
+		a.tasks[i].Date = today
+		a.persist()
+		a.status = "Moved to today: " + a.tasks[i].Title
+		break
+	}
+	// The task has left the Overdue list, so the cursor would otherwise sit
+	// past its new end.
+	a.clampSelections()
 }
 
 func (a *App) toggleSelected() {
@@ -1255,14 +1575,38 @@ func (a App) applyFilters(tasks []model.Task) []model.Task {
 }
 
 func (a App) todayTasks() []model.Task {
-	today := a.now().Format(dateFormat)
+	now := a.now()
+	today := now.Format(dateFormat)
 	var out []model.Task
 	for _, t := range a.tasks {
-		if t.Date == today {
+		// A deadline keeps a task in Today's list regardless of the day it
+		// was scheduled on — right up to the deadline and past it, since a
+		// missed one is what most needs looking at. Completing it is what
+		// takes it off the list, not the calendar.
+		if t.Date == today || (dueDatesEnabled && t.HasDueDate() && !t.Done) {
 			out = append(out, t)
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {
+		di, iHas := out[i].DaysUntilDue(now)
+		dj, jHas := out[j].DaysUntilDue(now)
+		if !dueDatesEnabled {
+			iHas, jHas = false, false
+		}
+
+		// Deadlines pin to the top, ordered by urgency: the most overdue
+		// first, counting up through today and out to the furthest deadline.
+		// One continuous gradient rather than an "overdue" block above a
+		// "upcoming" one — they're the same axis, and splitting them would
+		// put a task due today below one that was due yesterday for no
+		// reason the user can see.
+		if iHas != jHas {
+			return iHas
+		}
+		if iHas && di != dj {
+			return di < dj
+		}
+
 		if out[i].Time == out[j].Time {
 			return out[i].CreatedAt.Before(out[j].CreatedAt)
 		}
@@ -1281,7 +1625,9 @@ func (a App) overdueTasks() []model.Task {
 	today := a.now().Format(dateFormat)
 	var out []model.Task
 	for _, t := range a.tasks {
-		if t.Date < today && !t.Done {
+		// A task with a deadline lives in Today's list until it's done, so
+		// excluding it here keeps it from appearing in both panes at once.
+		if t.Date < today && !t.Done && !(dueDatesEnabled && t.HasDueDate()) {
 			out = append(out, t)
 		}
 	}
@@ -1300,7 +1646,7 @@ func (a App) helpGroups() []helpGroup {
 		return []helpGroup{
 			{"", []helpKey{
 				{"a", "add " + what}, {"tab", "switch to " + map[bool]string{true: "task", false: "note"}[a.simpleNoteMode]},
-				{"space/enter", "toggle/edit"}, {"d", "delete"}, {"i", "important"},
+				{"space", "toggle"}, {"enter", "edit"}, {"d", "delete"}, {"i", "important"},
 				{"↑/↓ j/k", "navigate"}, {"S", "settings"}, {"q", "quit"},
 			}},
 		}
@@ -1321,7 +1667,10 @@ func (a App) helpGroups() []helpGroup {
 	if a.mode == modeNoteEditing {
 		return []helpGroup{
 			{"", []helpKey{
-				{"enter", "save"}, {"ctrl+j / opt+enter", "new line"}, {"esc", "cancel"},
+				{"enter", "save"}, {"ctrl+j / opt+enter", "new line"},
+				// Esc is how you LEAVE the add loop, not how you undo the
+				// notes already written, so it isn't a "cancel" there.
+				{"esc", map[bool]string{true: "done", false: "cancel"}[a.noteEditIndex < 0]},
 			}},
 		}
 	}
@@ -1372,14 +1721,20 @@ func (a App) helpGroups() []helpGroup {
 	}
 
 	// Adding is Today-only (there's no such thing as adding a task that's
-	// already overdue), so the hint is omitted when Overdue has focus rather
-	// than advertising a key that does nothing.
-	taskKeys := []helpKey{{"a", "add"}}
+	// already overdue), and so is editing — the inline input lives in the
+	// Today pane. Both hints are omitted when Overdue has focus rather than
+	// advertising keys that do nothing there.
+	//
+	// Space means different things in the two panes — toggle done in Today,
+	// carry the task forward in Overdue — so the hint has to say which.
+	var taskKeys []helpKey
 	if a.focus == focusOverdue {
-		taskKeys = nil
+		taskKeys = []helpKey{{"space", "move to today"}}
+	} else {
+		taskKeys = []helpKey{{"a", "add"}, {"space", "done"}, {"enter", "edit"}}
 	}
 	taskKeys = append(taskKeys,
-		helpKey{"space/enter", "toggle"}, helpKey{"d", "delete"}, helpKey{"i", "important"})
+		helpKey{"d", "delete"}, helpKey{"i", "important"})
 
 	return []helpGroup{
 		{"Task", taskKeys},
@@ -1506,7 +1861,7 @@ func (a App) renderPage() string {
 
 			today := a.todayTasks()
 			todayVisible := a.visibleRowsFor(focusToday)
-			todayBody := renderTaskList(today, a.todaySelected, a.todayScroll, todayVisible, a.focus == focusToday, false, leftWidth-4)
+			todayBody := renderTaskList(today, a.todaySelected, a.todayScroll, todayVisible, a.focus == focusToday, false, leftWidth-4, a.now())
 			if a.mode == modeAdding {
 				a.input.TextStyle = lipgloss.NewStyle().Foreground(colorText).Background(colorPaneBg)
 				a.input.PlaceholderStyle = lipgloss.NewStyle().Foreground(colorMuted).Background(colorPaneBg)
@@ -1518,7 +1873,11 @@ func (a App) renderPage() string {
 				}
 
 				a.input.Width = 0
-				inputLine := inputPromptStyle.Render("+ ") + a.input.View()
+				glyph := "+ "
+				if a.taskEditID != "" {
+					glyph = "✎ "
+				}
+				inputLine := inputPromptStyle.Render(glyph) + a.input.View()
 				if pad := (leftWidth - 4) - lipgloss.Width(inputLine); pad > 0 {
 					inputLine += lipgloss.NewStyle().Background(colorPaneBg).Render(strings.Repeat(" ", pad))
 				}
@@ -1529,7 +1888,7 @@ func (a App) renderPage() string {
 			overdue := a.overdueTasks()
 			overdueWidth := leftWidth
 			overdueVisible := a.visibleRowsFor(focusOverdue)
-			overdueBody := renderTaskList(overdue, a.overdueSelected, a.overdueScroll, overdueVisible, a.focus == focusOverdue, true, overdueWidth-4)
+			overdueBody := renderTaskList(overdue, a.overdueSelected, a.overdueScroll, overdueVisible, a.focus == focusOverdue, true, overdueWidth-4, a.now())
 			overduePane := renderPane(fmt.Sprintf("Overdue (%d)%s", len(overdue), filters), overdueBody, a.focus == focusOverdue, overdueWidth, overdueHeight)
 
 			tasks := lipgloss.JoinVertical(lipgloss.Left, todayPane, overduePane)

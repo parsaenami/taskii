@@ -110,14 +110,21 @@ func renderBarChart(bars []stats.DayBar, width, height int, labelEvery int) stri
 		bars = bars[len(bars)-maxCols:]
 	}
 
-	doneStyleBar := lipgloss.NewStyle().Foreground(colorGreen).Background(colorPaneBg)
-	todoStyleBar := lipgloss.NewStyle().Foreground(colorMuted).Background(colorPaneBg)
+	// Each bar stacks three bands, bottom to top: tasks carried forward from
+	// an earlier day and finished today, tasks scheduled for today and
+	// finished, then whatever is still open. Migrated work sits at the bottom
+	// because it's the day's oldest debt — the foundation the rest is built
+	// on — and a band anchored to the axis is the one the eye measures most
+	// reliably.
+	migratedColor := colorPurple
+	doneColor := colorGreen
+	todoColor := colorMuted
+
 	blank := lipgloss.NewStyle().Background(colorPaneBg)
 	axisStyle := lipgloss.NewStyle().Foreground(colorBorder).Background(colorPaneBg)
-	// Composite cells: a half-block in one segment's colour over the other
-	// segment's colour, so a boundary that lands mid-row fills the whole cell.
-	doneOnTodoStyle := lipgloss.NewStyle().Foreground(colorGreen).Background(colorMuted)
-	todoOnDoneStyle := lipgloss.NewStyle().Foreground(colorMuted).Background(colorGreen)
+	migratedStyleBar := lipgloss.NewStyle().Foreground(migratedColor).Background(colorPaneBg)
+	doneStyleBar := lipgloss.NewStyle().Foreground(doneColor).Background(colorPaneBg)
+	todoStyleBar := lipgloss.NewStyle().Foreground(todoColor).Background(colorPaneBg)
 
 	// Each row is half a unit taller than the one below, so a row can be
 	// full, half, or empty for a given bar.
@@ -146,31 +153,8 @@ func renderBarChart(bars []stats.DayBar, width, height int, labelEvery int) stri
 			if i > 0 && gap > 0 {
 				line += blank.Render(strings.Repeat(" ", gap))
 			}
-			glyph, style := " ", blank
-			switch {
-			case float64(b.Done) >= rowTop:
-				glyph, style = blockFull, doneStyleBar
-			case float64(b.Done) > rowBottom:
-				// The done portion ends inside this row. If the bar continues
-				// above the boundary, the cell's top half belongs to the open
-				// segment — paint it as the background so the two halves meet
-				// with no gap; otherwise this is the bar's top edge and the
-				// pane background is correct.
-				glyph, style = blockLower, doneStyleBar
-				if float64(b.Total) >= rowTop {
-					style = doneOnTodoStyle
-				} else if float64(b.Total) > float64(b.Done) {
-					// The open segment is thinner than half a row: it would
-					// otherwise vanish. Render the whole cell as open with the
-					// done colour behind it.
-					style = todoOnDoneStyle
-					glyph = blockUpper
-				}
-			case float64(b.Total) >= rowTop:
-				glyph, style = blockFull, todoStyleBar
-			case float64(b.Total) > rowBottom:
-				glyph, style = blockLower, todoStyleBar
-			}
+			glyph, style := barCell(b, rowTop, rowBottom,
+				migratedColor, doneColor, todoColor, blank)
 			line += style.Render(strings.Repeat(glyph, barW))
 		}
 		rows = append(rows, line)
@@ -213,11 +197,22 @@ func renderBarChart(bars []stats.DayBar, width, height int, labelEvery int) stri
 	// Legend, so the two colours are self-explanatory. Its row was reserved
 	// above, so appending it here can't push the chart past its budget.
 	if withLegend {
-		legend := blank.Render(strings.Repeat(" ", yLabelWidth)) +
+		pad := blank.Render(strings.Repeat(" ", yLabelWidth))
+		full := pad +
+			migratedStyleBar.Render("█") + statLabelStyle.Render(" carried  ") +
 			doneStyleBar.Render("█") + statLabelStyle.Render(" done  ") +
 			todoStyleBar.Render("█") + statLabelStyle.Render(" open")
-		if lipgloss.Width(legend) <= width {
-			rows = append(rows, legend)
+		// Fall back to the original two-swatch legend on a pane too narrow
+		// for three, rather than dropping the legend altogether: "done" and
+		// "open" are the two most people read most often.
+		short := pad +
+			doneStyleBar.Render("█") + statLabelStyle.Render(" done  ") +
+			todoStyleBar.Render("█") + statLabelStyle.Render(" open")
+		switch {
+		case lipgloss.Width(full) <= width:
+			rows = append(rows, full)
+		case lipgloss.Width(short) <= width:
+			rows = append(rows, short)
 		}
 	}
 
@@ -278,4 +273,65 @@ func tickInRow(bottom, top float64, step, maxTotal int) (int, bool) {
 		v -= step
 	}
 	return 0, false
+}
+
+// barCell picks the glyph and style for one cell of one bar, given the value
+// range [rowBottom, rowTop) that cell spans.
+//
+// The bar is a stack of coloured bands. Walking them bottom-up, the cell is
+// painted by the first band whose top edge reaches into this row; a band
+// ending mid-row is drawn as a half-block composited over whichever colour
+// sits above it, so the boundary fills the whole cell instead of letting the
+// pane background show through as a gap.
+//
+// Written as a loop over a band list rather than a switch over every
+// pair of adjacent bands: with three bands the case analysis would be nine
+// branches, and each new band would square it again.
+func barCell(b stats.DayBar, rowTop, rowBottom float64,
+	migratedColor, doneColor, todoColor lipgloss.Color,
+	blank lipgloss.Style) (string, lipgloss.Style) {
+
+	// Cumulative top edge of each band, bottom to top. DoneMigrated is a
+	// SUBSET of Done, so the plain-done band is the remainder.
+	migrated := float64(b.DoneMigrated)
+	done := float64(b.Done)
+	total := float64(b.Total)
+
+	bands := []struct {
+		top   float64
+		color lipgloss.Color
+	}{
+		{migrated, migratedColor},
+		{done, doneColor},
+		{total, todoColor},
+	}
+
+	for i, band := range bands {
+		if band.top <= rowBottom {
+			continue // this band ends below the row entirely
+		}
+		// The colour directly above this band, if the bar continues past it.
+		var above lipgloss.Color
+		hasAbove := false
+		for _, next := range bands[i+1:] {
+			if next.top > band.top {
+				above, hasAbove = next.color, true
+				break
+			}
+		}
+
+		switch {
+		case band.top >= rowTop:
+			// Band fills this row outright.
+			return blockFull, lipgloss.NewStyle().Foreground(band.color).Background(colorPaneBg)
+		case hasAbove:
+			// Band ends inside the row and something continues above it:
+			// composite so both halves are painted.
+			return blockLower, lipgloss.NewStyle().Foreground(band.color).Background(above)
+		default:
+			// Top edge of the whole bar; the pane background is correct above.
+			return blockLower, lipgloss.NewStyle().Foreground(band.color).Background(colorPaneBg)
+		}
+	}
+	return " ", blank
 }

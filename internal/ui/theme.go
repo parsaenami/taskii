@@ -488,6 +488,10 @@ var (
 	overdueStyle     lipgloss.Style
 	overdueDoneStyle lipgloss.Style
 	importantStyle   lipgloss.Style
+	migratedStyle    lipgloss.Style
+	tagStyle         lipgloss.Style
+	dueStyle         lipgloss.Style
+	dueOverdueStyle  lipgloss.Style
 	appointmentStyle lipgloss.Style
 	selectedStyle    lipgloss.Style
 	timeStyle        lipgloss.Style
@@ -564,6 +568,16 @@ func applyTheme(t Theme) {
 	overdueDoneStyle = lipgloss.NewStyle().Foreground(colorMuted).Background(colorPaneBg)
 
 	importantStyle = lipgloss.NewStyle().Foreground(colorWarning).Bold(true).Background(colorPaneBg)
+	migratedStyle = lipgloss.NewStyle().Foreground(colorDanger).Bold(true).Background(colorPaneBg)
+	tagStyle = lipgloss.NewStyle().Foreground(colorAccent).Background(colorPaneBg)
+	// An upcoming deadline gets its own hue rather than sharing the ★'s
+	// warning amber: the two markers frequently sit side by side on one row,
+	// and in the same colour they read as one compound symbol instead of two
+	// independent facts. A missed deadline is danger red — but the ‼ glyph
+	// already separates the two states on its own, so the colours reinforce
+	// rather than carry the meaning.
+	dueStyle = lipgloss.NewStyle().Bold(true).Foreground(colorPurple).Background(colorPaneBg)
+	dueOverdueStyle = lipgloss.NewStyle().Bold(true).Foreground(colorDanger).Background(colorPaneBg)
 
 	appointmentStyle = lipgloss.NewStyle().Foreground(colorPurple).Background(colorPaneBg)
 

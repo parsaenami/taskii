@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 
@@ -14,7 +15,7 @@ import (
 // for the scroll indicator, so pane height stays constant whether or not the
 // indicator is actually shown). scrollOffset is the index of the first
 // visible task.
-func renderTaskList(tasks []model.Task, selected int, scrollOffset int, visibleRows int, focused bool, overdue bool, width int) string {
+func renderTaskList(tasks []model.Task, selected int, scrollOffset int, visibleRows int, focused bool, overdue bool, width int, now time.Time) string {
 	if len(tasks) == 0 {
 		// Blank second line matches the indicator line always emitted below,
 		// so an empty list is the same height as a populated one.
@@ -32,7 +33,7 @@ func renderTaskList(tasks []model.Task, selected int, scrollOffset int, visibleR
 
 	var lines []string
 	for i := scrollOffset; i < end; i++ {
-		lines = append(lines, renderTaskLine(tasks[i], i == selected && focused, overdue, width, colorPaneBg))
+		lines = append(lines, renderTaskLine(tasks[i], i == selected && focused, overdue, width, colorPaneBg, now))
 	}
 
 	// Always emit the indicator line, blank when unneeded, so the list's
@@ -54,14 +55,26 @@ func renderTaskList(tasks []model.Task, selected int, scrollOffset int, visibleR
 	return strings.Join(lines, "\n")
 }
 
-func renderTaskLine(t model.Task, selected bool, overdue bool, width int, surface lipgloss.Color) string {
-	openBracket, closeBracket := "[", "]"
-	if t.IsAppointment() {
-		openBracket, closeBracket = "{", "}"
-	}
-	check := openBracket + " " + closeBracket
-	if t.Done {
-		check = openBracket + "x" + closeBracket
+func renderTaskLine(t model.Task, selected bool, overdue bool, width int, surface lipgloss.Color, now time.Time) string {
+	// In the Overdue pane the checkbox column is replaced by an age badge:
+	// there's no toggling-done from that list any more (space migrates the
+	// task to Today instead), so a checkbox would offer an action the pane
+	// no longer has. The age is what the row is actually there to tell you.
+	check := ""
+	if overdue {
+		// Right-aligned in a fixed 3-cell column ("  1d" would misalign
+		// against "24d"), so titles start on the same column down the list
+		// however stale the tasks are.
+		check = fmt.Sprintf("%3s", fmt.Sprintf("%dd", t.AgeDays(now)))
+	} else {
+		openBracket, closeBracket := "[", "]"
+		if t.IsAppointment() {
+			openBracket, closeBracket = "{", "}"
+		}
+		check = openBracket + " " + closeBracket
+		if t.Done {
+			check = openBracket + "x" + closeBracket
+		}
 	}
 
 	prefix := ">"
@@ -113,15 +126,42 @@ func renderTaskLine(t model.Task, selected bool, overdue bool, width int, surfac
 	timePlain := ""
 	if t.Time != "" {
 		timePlain = t.Time
+		if t.EndTime != "" {
+			timePlain += "-" + t.EndTime
+		}
 	}
 	starPlain := ""
 	if t.Important {
 		starPlain = "★"
 	}
+	// A migrated task carries ▲ in Today's list as a standing reminder that
+	// it was carried forward. It stacks WITH the star rather than replacing
+	// it: importance and staleness are independent facts about a task, and
+	// showing only one would hide the other.
+	migratedPlain := ""
+	if t.IsMigrated() && !overdue {
+		migratedPlain = "▲"
+	}
 	title := t.Title
 
+	// The deadline chip: "!Nd" while the deadline is still ahead, "‼Nd" once
+	// it has been missed. The glyph — not the colour — is what carries the
+	// distinction, so the two states stay apart in a monochrome terminal and
+	// for anyone who can't separate the two hues. The count stays positive
+	// in both directions, which keeps "!1d" (due tomorrow) from having to be
+	// told apart from "-1d" (a day late) by a single character.
+	duePlain := ""
+	dueOverdue := false
+	if days, ok := t.DaysUntilDue(now); dueDatesEnabled && ok {
+		if days < 0 {
+			duePlain, dueOverdue = fmt.Sprintf("‼%dd", -days), true
+		} else {
+			duePlain = fmt.Sprintf("!%dd", days)
+		}
+	}
+
 	if width > 0 {
-		prefix, check, timePlain, starPlain, title = fitSegmentsToWidth(prefix, check, timePlain, starPlain, title, width)
+		prefix, check, timePlain, starPlain, migratedPlain, duePlain, title = fitSegmentsToWidth(prefix, check, timePlain, starPlain, migratedPlain, duePlain, title, width)
 	}
 
 	var b strings.Builder
@@ -134,7 +174,22 @@ func renderTaskLine(t model.Task, selected bool, overdue bool, width int, surfac
 		b.WriteString(importantStyle.Copy().Background(bg).Render(starPlain))
 		b.WriteString(style.Render(" "))
 	}
-	b.WriteString(style.Render(title))
+	if migratedPlain != "" {
+		b.WriteString(migratedStyle.Copy().Background(bg).Render(migratedPlain))
+		b.WriteString(style.Render(" "))
+	}
+	if duePlain != "" {
+		ds := dueStyle
+		if dueOverdue {
+			ds = dueOverdueStyle
+		}
+		b.WriteString(ds.Copy().Background(bg).Render(duePlain))
+		b.WriteString(style.Render(" "))
+	}
+	// The title keeps its "#tag" words exactly where they were typed; only
+	// their colour changes. Moving them to the end would rewrite the user's
+	// sentence — "review #api docs" reads differently from "review docs #api".
+	b.WriteString(renderTitleWithTags(title, style, bg))
 
 	if width > 0 {
 		rendered := b.String()
@@ -150,7 +205,7 @@ func renderTaskLine(t model.Task, selected bool, overdue bool, width int, surfac
 // exceeds w, shortens the title with an ellipsis first (matching fitToWidth's
 // truncate-from-the-end behavior) since the title is the one segment safe to
 // shrink without losing meaning — prefix/check/time/star stay intact.
-func fitSegmentsToWidth(prefix, check, timePlain, starPlain, title string, w int) (string, string, string, string, string) {
+func fitSegmentsToWidth(prefix, check, timePlain, starPlain, migratedPlain, duePlain, title string, w int) (string, string, string, string, string, string, string) {
 	assemble := func(title string) string {
 		s := prefix + " " + check + " "
 		if timePlain != "" {
@@ -159,27 +214,64 @@ func fitSegmentsToWidth(prefix, check, timePlain, starPlain, title string, w int
 		if starPlain != "" {
 			s += starPlain + " "
 		}
+		if migratedPlain != "" {
+			s += migratedPlain + " "
+		}
+		if duePlain != "" {
+			s += duePlain + " "
+		}
 		return s + title
 	}
 	if lipgloss.Width(assemble(title)) <= w {
-		return prefix, check, timePlain, starPlain, title
+		return prefix, check, timePlain, starPlain, migratedPlain, duePlain, title
 	}
 	fixedWidth := lipgloss.Width(assemble(""))
 	budget := w - fixedWidth
 	if budget < 1 {
 		// Not even room for the fixed prefix — nothing sensible to show for
 		// the title; leave it empty rather than corrupting prefix/check.
-		return prefix, check, timePlain, starPlain, ""
+		return prefix, check, timePlain, starPlain, migratedPlain, duePlain, ""
 	}
 	runes := []rune(title)
 	for len(runes) > 0 {
 		candidate := string(runes) + "…"
 		if lipgloss.Width(candidate) <= budget {
-			return prefix, check, timePlain, starPlain, candidate
+			return prefix, check, timePlain, starPlain, migratedPlain, duePlain, candidate
 		}
 		runes = runes[:len(runes)-1]
 	}
-	return prefix, check, timePlain, starPlain, ""
+	return prefix, check, timePlain, starPlain, migratedPlain, duePlain, ""
+}
+
+// renderTitleWithTags styles the "#tag" words inside a title without moving
+// them, splitting on spaces and colouring each tag word while the rest keeps
+// the row's own style.
+//
+// Each word is rendered as its own complete span (own fg + the shared bg)
+// and concatenated — never wrapped in a second Render() — for the same
+// reason the segments above are: lipgloss emits a style's codes once at a
+// string's edges, so re-rendering pre-styled text leaves a background hole
+// after every inner span's reset.
+func renderTitleWithTags(title string, style lipgloss.Style, bg lipgloss.Color) string {
+	if !strings.Contains(title, "#") {
+		return style.Render(title)
+	}
+	tag := tagStyle.Copy().Background(bg)
+	if style.GetBold() {
+		tag = tag.Bold(true)
+	}
+	var b strings.Builder
+	for i, word := range strings.Split(title, " ") {
+		if i > 0 {
+			b.WriteString(style.Render(" "))
+		}
+		if len(word) > 1 && strings.HasPrefix(word, "#") {
+			b.WriteString(tag.Render(word))
+			continue
+		}
+		b.WriteString(style.Render(word))
+	}
+	return b.String()
 }
 
 // fitToWidth pads or truncates s (by rune display width) to exactly w cells.

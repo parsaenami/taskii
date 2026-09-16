@@ -170,7 +170,7 @@ func (a App) renderSimpleList(entries []simpleEntry, visibleRows, width int) str
 			lines = append(lines, line)
 			continue
 		}
-		lines = append(lines, renderTaskLine(e.task, selected, e.overdue, width, colorBg))
+		lines = append(lines, renderTaskLine(e.task, selected, e.overdue, width, colorBg, a.now()))
 	}
 
 	above := scroll
