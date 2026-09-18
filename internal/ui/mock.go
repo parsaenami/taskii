@@ -42,10 +42,10 @@ func mockTasks(now time.Time) []model.Task {
 	// Relative "!Nd" deadlines are resolved against `now` here exactly as
 	// addTask does, so a mock deadline counts down like a real one.
 	entry := func(id, raw, dateOffset string, done, important bool) model.Task {
-		p, ok := parseTaskInput(raw)
-		if !ok {
+		p, err := parseTaskInput(raw, now)
+		if err != nil {
 			// A malformed mock entry is a bug in this file, not user input.
-			panic("mock: unparseable task input: " + raw)
+			panic("mock: unparseable task input: " + raw + ": " + err.Error())
 		}
 		t := model.Task{
 			ID:        id,

@@ -192,10 +192,10 @@ func TestTaskRowMarkers(t *testing.T) {
 	plain := func(s string) string { return ansiRe.ReplaceAllString(s, "") }
 
 	todayRow := func(task model.Task) string {
-		return plain(renderTaskLine(task, false, false, 40, colorPaneBg, now))
+		return plain(renderTaskLine(task, false, false, 40, colorPaneBg, now, false))
 	}
 	overdueRow := func(task model.Task) string {
-		return plain(renderTaskLine(task, false, true, 40, colorPaneBg, now))
+		return plain(renderTaskLine(task, false, true, 40, colorPaneBg, now, false))
 	}
 
 	if got := todayRow(model.Task{Title: "A", Date: "2026-09-13"}); !strings.Contains(got, "[ ]") {

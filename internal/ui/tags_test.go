@@ -15,6 +15,8 @@ import (
 )
 
 func TestParseTaskInputAnnotations(t *testing.T) {
+	now := testNow()
+	today := now.Format(dateFormat)
 	for _, tc := range []struct {
 		name  string
 		raw   string
@@ -24,72 +26,72 @@ func TestParseTaskInputAnnotations(t *testing.T) {
 		{
 			name: "plain task",
 			raw:  "write the report",
-			want: parsedTask{title: "write the report", kind: model.KindTask},
+			want: parsedTask{title: "write the report", date: today, kind: model.KindTask},
 		},
 		{
 			name: "point in time",
 			raw:  "standup 09:00",
-			want: parsedTask{title: "standup", time: "09:00", kind: model.KindAppointment},
+			want: parsedTask{title: "standup", date: today, time: "09:00", kind: model.KindAppointment},
 		},
 		{
 			name: "time range",
 			raw:  "design review 14:00-15:30",
-			want: parsedTask{title: "design review", time: "14:00", endTime: "15:30", kind: model.KindAppointment},
+			want: parsedTask{title: "design review", date: today, time: "14:00", endTime: "15:30", kind: model.KindAppointment},
 		},
 		{
 			// Tags are RECORDED but stay in the title, in the position they
 			// were typed — the stored text is the sentence the user wrote.
 			name: "single tag",
 			raw:  "fix login #api",
-			want: parsedTask{title: "fix login #api", kind: model.KindTask, tags: []string{"api"}},
+			want: parsedTask{title: "fix login #api", date: today, kind: model.KindTask, tags: []string{"api"}},
 		},
 		{
 			// Tags are self-delimiting, so unlike a time they're recognised
 			// anywhere in the line rather than only at the end.
 			name: "tags mid-sentence",
 			raw:  "review #api docs #urgent today",
-			want: parsedTask{title: "review #api docs #urgent today", kind: model.KindTask, tags: []string{"api", "urgent"}},
+			want: parsedTask{title: "review #api docs #urgent today", date: today, kind: model.KindTask, tags: []string{"api", "urgent"}},
 		},
 		{
 			name: "tags and range together",
 			raw:  "planning #ops #q4 11:00-12:30",
-			want: parsedTask{title: "planning #ops #q4", time: "11:00", endTime: "12:30", kind: model.KindAppointment, tags: []string{"ops", "q4"}},
+			want: parsedTask{title: "planning #ops #q4", date: today, time: "11:00", endTime: "12:30", kind: model.KindAppointment, tags: []string{"ops", "q4"}},
 		},
 		{
 			// The recorded tag LIST dedupes case-insensitively, but the
 			// title keeps every word exactly as typed.
 			name: "duplicate tags collapse in the list only",
 			raw:  "ship #api fix #API again",
-			want: parsedTask{title: "ship #api fix #API again", kind: model.KindTask, tags: []string{"api"}},
+			want: parsedTask{title: "ship #api fix #API again", date: today, kind: model.KindTask, tags: []string{"api"}},
 		},
 		{
 			// A time is only recognised as the LAST field, so an interior
 			// number or clock time stays part of the title.
 			name: "interior time stays in title",
 			raw:  "meet at 09:00 downtown",
-			want: parsedTask{title: "meet at 09:00 downtown", kind: model.KindTask},
+			want: parsedTask{title: "meet at 09:00 downtown", date: today, kind: model.KindTask},
 		},
 		{
 			name: "bare hash is punctuation",
 			raw:  "issue # 42",
-			want: parsedTask{title: "issue # 42", kind: model.KindTask},
+			want: parsedTask{title: "issue # 42", date: today, kind: model.KindTask},
 		},
 		{
 			// A backwards or zero-length range is likelier a typo or literal
 			// text than an event, so it stays in the title.
 			name: "backwards range is not a range",
 			raw:  "shift 17:00-09:00",
-			want: parsedTask{title: "shift 17:00-09:00", kind: model.KindTask},
+			want: parsedTask{title: "shift 17:00-09:00", date: today, kind: model.KindTask},
 		},
 		{
 			name: "zero length range is not a range",
 			raw:  "blip 09:00-09:00",
-			want: parsedTask{title: "blip 09:00-09:00", kind: model.KindTask},
+			want: parsedTask{title: "blip 09:00-09:00", date: today, kind: model.KindTask},
 		},
 		{
 			name: "invalid clock stays in title",
 			raw:  "call 25:00",
-			want: parsedTask{title: "call 25:00", kind: model.KindTask},
+			want: parsedTask{title: "call 25:00", date: today, kind: model.KindTask},
 		},
 		{name: "empty", raw: "   ", notOK: true},
 		{
@@ -97,13 +99,13 @@ func TestParseTaskInputAnnotations(t *testing.T) {
 			// has text to show — only a truly empty entry is rejected.
 			name: "tags only is still a title",
 			raw:  "#api 09:00",
-			want: parsedTask{title: "#api", time: "09:00", kind: model.KindAppointment, tags: []string{"api"}},
+			want: parsedTask{title: "#api", date: today, time: "09:00", kind: model.KindAppointment, tags: []string{"api"}},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := parseTaskInput(tc.raw)
-			if ok == tc.notOK {
-				t.Fatalf("ok = %v, want %v", ok, !tc.notOK)
+			got, err := parseTaskInput(tc.raw, now)
+			if (err != nil) != tc.notOK {
+				t.Fatalf("err = %v, want notOK %v", err, tc.notOK)
 			}
 			if tc.notOK {
 				return
@@ -128,15 +130,15 @@ func TestTaskInputRoundTrip(t *testing.T) {
 		"ship it #api #infra 16:00",
 		"planning #ops 11:00-12:30",
 	} {
-		p, ok := parseTaskInput(raw)
-		if !ok {
-			t.Fatalf("parse failed for %q", raw)
+		p, err := parseTaskInput(raw, testNow())
+		if err != nil {
+			t.Fatalf("parse failed for %q: %v", raw, err)
 		}
 		task := model.Task{Title: p.title, Time: p.time, EndTime: p.endTime, Kind: p.kind, Tags: p.tags}
 
-		again, ok := parseTaskInput(taskInputText(task, testNow()))
-		if !ok {
-			t.Fatalf("re-parse failed for %q", raw)
+		again, err := parseTaskInput(taskInputText(task, testNow()), testNow())
+		if err != nil {
+			t.Fatalf("re-parse failed for %q: %v", raw, err)
 		}
 		if !reflect.DeepEqual(p, again) {
 			t.Errorf("%q did not round-trip\n first: %+v\nsecond: %+v", raw, p, again)
@@ -176,7 +178,7 @@ func TestEditUpdatesAndClearsAnnotations(t *testing.T) {
 func TestRenderShowsRangeAndTags(t *testing.T) {
 	plain := func(s string) string { return ansiRe.ReplaceAllString(s, "") }
 	row := func(task model.Task, w int) string {
-		return plain(renderTaskLine(task, false, false, w, colorPaneBg, testNow()))
+		return plain(renderTaskLine(task, false, false, w, colorPaneBg, testNow(), false))
 	}
 
 	ranged := model.Task{Title: "Review", Time: "14:00", EndTime: "15:30", Kind: model.KindAppointment}
@@ -213,7 +215,7 @@ func TestTagsAreColoredInPlace(t *testing.T) {
 
 	styled := renderTaskLine(
 		model.Task{Title: "review #api docs", Tags: []string{"api"}},
-		false, false, 50, colorPaneBg, testNow())
+		false, false, 50, colorPaneBg, testNow(), false)
 
 	// The tag word carries the tag colour.
 	if !strings.Contains(styled, tagSeq+";48;2") {
@@ -235,7 +237,7 @@ func TestTagsAreColoredInPlace(t *testing.T) {
 	}
 
 	// A title with no tag gets no tag-coloured span at all.
-	untagged := renderTaskLine(model.Task{Title: "review docs"}, false, false, 50, colorPaneBg, testNow())
+	untagged := renderTaskLine(model.Task{Title: "review docs"}, false, false, 50, colorPaneBg, testNow(), false)
 	if strings.Contains(untagged, tagSeq+";48;2") {
 		t.Errorf("untagged row should carry no tag colouring: %q", untagged)
 	}

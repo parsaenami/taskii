@@ -168,7 +168,7 @@ func TestMockRowsFitTheirPane(t *testing.T) {
 
 	const width = 44
 	for _, task := range a.todayTasks() {
-		row := renderTaskLine(task, false, false, width, colorPaneBg, now)
+		row := renderTaskLine(task, false, false, width, colorPaneBg, now, false)
 		if got := len(strings.Split(ansiRe.ReplaceAllString(row, ""), "\n")); got != 1 {
 			t.Errorf("task %q wrapped to %d lines", task.Title, got)
 		}

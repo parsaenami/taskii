@@ -51,6 +51,7 @@ type App struct {
 	focus focusedPane
 	mode  mode
 
+	upcoming      bool // the Today pane is currently showing future tasks
 	todaySelected int
 	todayScroll   int
 
@@ -88,10 +89,11 @@ type App struct {
 	// input is adding a new one. Held as an ID rather than a list index
 	// because both task lists are sorted and re-derived every frame — an
 	// index would point at a different row the moment a title changes.
-	taskEditID string
-	err        string
-	status     string
-	noPersist  bool
+	taskEditID   string
+	err          string
+	status       string
+	noPersist    bool
+	deleteItemID string // task/note shown when the delete confirmation opened
 
 	username string
 	layout   layout
@@ -159,7 +161,7 @@ func NewApp(opts Options) App {
 	}
 
 	ti := textinput.New()
-	ti.Placeholder = "Title  ·  #tag  ·  HH:MM[-HH:MM]"
+	ti.Placeholder = "Title  ·  #tag  ·  MM-DD  ·  HH:MM[-HH:MM]"
 	ti.CharLimit = 120
 
 	ta := textarea.New()
@@ -199,9 +201,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
+		a.clampSelections()
 		return a, nil
 
 	case pomodoroTickMsg:
+		// Tasks move between date-based lists at midnight without a reload.
+		a.clampSelections()
 		if a.pomo.tick() {
 			return a, tea.Batch(pomodoroTick(), notifyPhaseChange(a.pomo.phase))
 		}
@@ -240,7 +245,7 @@ var expandedAllowedKeys = map[string]bool{
 
 // updateSimple is the whole key map for --simple: one list, one selection,
 // and tab choosing which kind of item `a` will add. The other panes don't
-// exist here, so their bindings (pomodoro, filters, focus switching, layout)
+// exist here, so their bindings (pomodoro, focus switching, layout)
 // are simply absent rather than being gated off.
 func (a App) updateSimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	entries := a.simpleEntries()
@@ -249,7 +254,24 @@ func (a App) updateSimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		return a, tea.Quit
 
+	case "C":
+		a.toggleUpcoming()
+		return a, nil
+
+	case "I":
+		a.filterImportant = !a.filterImportant
+		a.clampSelections()
+		return a, nil
+
+	case "U":
+		a.filterUndone = !a.filterUndone
+		a.clampSelections()
+		return a, nil
+
 	case "tab":
+		if a.upcoming {
+			a.toggleUpcoming()
+		}
 		a.simpleNoteMode = !a.simpleNoteMode
 		return a, nil
 
@@ -291,10 +313,12 @@ func (a App) updateSimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return a.startTaskEdit(&e.task)
 		}
 		a.toggleTaskByID(e.task.ID)
+		a.clampSelections()
 		return a, nil
 
 	case "d":
 		if a.simpleSelected >= 0 && a.simpleSelected < len(entries) {
+			a.deleteItemID = a.selectedItemID()
 			a.mode = modeConfirmDelete
 		}
 		return a, nil
@@ -303,6 +327,7 @@ func (a App) updateSimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if a.simpleSelected >= 0 && a.simpleSelected < len(entries) {
 			if e := entries[a.simpleSelected]; !e.isNote {
 				a.toggleImportantByID(e.task.ID)
+				a.clampSelections()
 			}
 		}
 		return a, nil
@@ -344,6 +369,7 @@ func (a *App) syncSimpleScroll(entries []simpleEntry) {
 		}
 	}
 	if first < 0 {
+		a.simpleScroll = 0
 		return
 	}
 	scroll := a.simpleScroll
@@ -513,11 +539,13 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if a.focus == focusNotes {
 			if len(a.notes) > 0 {
+				a.deleteItemID = a.selectedItemID()
 				a.mode = modeConfirmDelete
 			}
 			return a, nil
 		}
-		if a.selectedTask() != nil {
+		if selected := a.selectedTask(); selected != nil {
+			a.deleteItemID = a.selectedItemID()
 			a.mode = modeConfirmDelete
 		}
 		return a, nil
@@ -525,8 +553,12 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "C":
 		// Clear the whole board. Capitalised and confirmed, since it discards
 		// everything at once.
-		if a.focus == focusNotes && len(a.notes) > 0 {
-			a.mode = modeConfirmClearNotes
+		if a.focus == focusNotes {
+			if len(a.notes) > 0 {
+				a.mode = modeConfirmClearNotes
+			}
+		} else {
+			a.toggleUpcoming()
 		}
 		return a, nil
 
@@ -637,14 +669,16 @@ func (a App) updateAdding(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	case "enter":
 		if a.taskEditID != "" {
-			a.applyTaskEdit(a.input.Value())
-			a.mode = modeNormal
-			a.taskEditID = ""
-			a.input.Blur()
+			if a.applyTaskEdit(a.input.Value()) {
+				a.mode = modeNormal
+				a.taskEditID = ""
+				a.input.Blur()
+			}
 			return a, nil
 		}
-		a.addTask(a.input.Value())
-		a.input.SetValue("")
+		if a.addTask(a.input.Value()) {
+			a.input.SetValue("")
+		}
 		return a, nil
 	}
 
@@ -955,15 +989,15 @@ func (a *App) inputFieldWidth() int {
 }
 
 // applyTaskEdit writes the inline input back onto the task being edited,
-// re-parsing the trailing "HH:MM" the same way addTask does so an edit can
-// promote a task to an appointment or demote it back. An emptied title is
-// treated as a no-op rather than a delete: `d` is the deliberate way to
-// remove a task, and silently destroying one on a stray ctrl+u would be a
-// nasty surprise.
-func (a *App) applyTaskEdit(raw string) {
-	p, ok := parseTaskInput(raw)
-	if !ok {
-		return
+// re-parsing the same annotation syntax addTask uses so an edit can promote
+// a task to an appointment, reschedule it, or demote it back. Returns
+// whether the edit was applied; on a parse error the caller leaves the input
+// (and edit mode) open so the text can be corrected instead of discarded.
+func (a *App) applyTaskEdit(raw string) bool {
+	p, err := parseTaskInput(raw, a.now())
+	if err != nil {
+		a.err = err.Error()
+		return false
 	}
 	for i := range a.tasks {
 		if a.tasks[i].ID == a.taskEditID {
@@ -971,6 +1005,7 @@ func (a *App) applyTaskEdit(raw string) {
 			// from the text removes it from the task — an edit shows the
 			// whole annotation set, so what's on screen is what's stored.
 			a.tasks[i].Title = p.title
+			a.tasks[i].Date = p.date
 			a.tasks[i].Time = p.time
 			a.tasks[i].EndTime = p.endTime
 			a.tasks[i].Tags = p.tags
@@ -982,16 +1017,16 @@ func (a *App) applyTaskEdit(raw string) {
 				a.tasks[i].DueDate = a.dueDateFrom(p)
 			}
 			a.tasks[i].Kind = p.kind
+			a.err = ""
 			a.persist()
+			a.showTaskDate(p.date)
 			a.selectTaskByID(a.taskEditID)
-			return
+			return true
 		}
 	}
+	return true
 }
 
-// parseTaskInput splits a raw entry into its title and, when the last field
-// looks like a clock time, an appointment time. Shared by addTask and
-// applyTaskEdit so the two can't disagree about what "ends with HH:MM" means.
 // dueDatesEnabled gates the whole "!Nd" deadline feature, which is shelved
 // for now rather than removed: the parser, the list/sort behaviour and the
 // chip renderer are all still here and still tested, and flipping this to
@@ -1004,10 +1039,11 @@ func (a *App) applyTaskEdit(raw string) {
 const dueDatesEnabled = false
 
 // parsedTask is everything the annotation syntax can pull out of one line of
-// input. Grouped into a struct rather than returned as five loose values so
+// input. Grouped into a struct rather than returned as loose values so
 // adding the next annotation doesn't churn every call site's signature.
 type parsedTask struct {
 	title   string
+	date    string
 	time    string
 	endTime string
 	kind    model.Kind
@@ -1020,30 +1056,37 @@ type parsedTask struct {
 
 // parseTaskInput splits a raw entry into its title and annotations:
 //
-//	"standup 09:00"        → appointment at 09:00
-//	"standup 09:00-09:15"  → appointment from 09:00 to 09:15
-//	"fix login #api"       → task tagged "api", titled "fix login"
+//	"standup 09:00"           → appointment at 09:00, today
+//	"standup 09:00-09:15"     → appointment from 09:00 to 09:15, today
+//	"fix login #api"          → task tagged "api", titled "fix login"
+//	"read a chapter 09-10"    → task scheduled for the next Sep 10
+//	"team meeting 09-10 14:30" → appointment at 14:30 on the next Sep 10
 //
-// The two annotation kinds are positional in different ways, which is why
-// they're handled separately rather than in one pass. A time is only
-// recognised as the LAST field — "meet 3 people at 09:00" shouldn't have its
-// "3" eaten — whereas "#tag" is self-delimiting and so is lifted from
-// anywhere in the line, which is what every tool with hashtags does.
+// The annotations are positional in different ways, which is why they're
+// handled separately rather than in one pass. A scheduled date, when
+// present, is the field immediately before the time/due annotations — "meet
+// 09-10 14:30" — so it's peeled off after those are consumed but before tags
+// are collected. A time or due-field is only recognised as the LAST field —
+// "meet 3 people at 09:00" shouldn't have its "3" eaten — whereas "#tag" is
+// self-delimiting and so is lifted from anywhere in the line, which is what
+// every tool with hashtags does.
 //
-// Returns ok=false when nothing but annotations was entered: a task has to
-// have a title to be worth storing.
-func parseTaskInput(raw string) (parsedTask, bool) {
-	out := parsedTask{kind: model.KindTask}
+// Returns an error when the title would be empty, or when a trailing field
+// looks like a scheduled date but isn't a valid one — that's the one
+// annotation worth telling the user about, since a silently-discarded MM-DD
+// would otherwise just vanish into the title.
+func parseTaskInput(raw string, now time.Time) (parsedTask, error) {
+	out := parsedTask{kind: model.KindTask, date: now.Format(dateFormat)}
 
 	fields := strings.Fields(raw)
 	if len(fields) == 0 {
-		return out, false
+		return parsedTask{}, fmt.Errorf("task title cannot be empty")
 	}
 
 	// The end-anchored annotations are consumed first, since tag handling
 	// below doesn't remove words but the loop here does shift what "last"
-	// means. Both are accepted in either order ("... 09:00 !2d" and
-	// "... !2d 09:00"), because requiring a fixed order between two
+	// means. Due-field and time are accepted in either order ("... 09:00
+	// !2d" and "... !2d 09:00"), because requiring a fixed order between two
 	// independent annotations is a rule with nothing behind it.
 	for len(fields) > 0 {
 		last := fields[len(fields)-1]
@@ -1065,6 +1108,28 @@ func parseTaskInput(raw string) (parsedTask, bool) {
 		break
 	}
 
+	// The scheduled date sits immediately before whatever time/due fields
+	// were just peeled off, so it's checked once against what's now the
+	// last field. A field that merely LOOKS like a clock time (colon at
+	// index 2) but failed isTimeLike/parseTimeField above is a typo, not
+	// title text — "meet 09-10 24:00" must not silently become a task
+	// titled "meet 09-10 24:00" when what's missing is a valid time.
+	if len(fields) >= 2 && isMonthDayToken(fields[len(fields)-2]) {
+		last := fields[len(fields)-1]
+		if len(last) == 5 && last[2] == ':' {
+			return parsedTask{}, fmt.Errorf("invalid appointment time %q: use HH:MM (00:00–23:59)", last)
+		}
+	}
+	if len(fields) > 0 && isMonthDayToken(fields[len(fields)-1]) {
+		last := fields[len(fields)-1]
+		date, err := nextScheduledDate(last, now)
+		if err != nil {
+			return parsedTask{}, err
+		}
+		out.date = date
+		fields = fields[:len(fields)-1]
+	}
+
 	// Tags are RECORDED but left in place: "review #api docs" keeps reading
 	// as the sentence it was typed as, with the tag word merely coloured
 	// differently. Lifting them to the end would rewrite the user's phrasing
@@ -1084,9 +1149,9 @@ func parseTaskInput(raw string) (parsedTask, bool) {
 
 	out.title = strings.Join(fields, " ")
 	if out.title == "" {
-		return parsedTask{kind: model.KindTask}, false
+		return parsedTask{}, fmt.Errorf("task title cannot be empty")
 	}
-	return out, true
+	return out, nil
 }
 
 // parseDueField recognises a trailing "!Nd" deadline: !0d is today, !1d
@@ -1155,28 +1220,34 @@ func (a *App) dueDateFrom(p parsedTask) string {
 	return a.now().AddDate(0, 0, p.dueInDays).Format(dateFormat)
 }
 
-func (a *App) addTask(raw string) {
-	p, ok := parseTaskInput(raw)
-	if !ok {
-		return
+func (a *App) addTask(raw string) bool {
+	now := a.now()
+	p, err := parseTaskInput(raw, now)
+	if err != nil {
+		a.err = err.Error()
+		return false
 	}
 
 	t := model.Task{
-		ID:        strconv.FormatInt(a.now().UnixNano(), 36),
+		ID:        strconv.FormatInt(now.UnixNano(), 36),
 		Title:     p.title,
 		Done:      false,
 		Kind:      p.kind,
-		Date:      a.now().Format(dateFormat),
+		Date:      p.date,
 		Time:      p.time,
 		EndTime:   p.endTime,
 		Tags:      p.tags,
 		DueDate:   a.dueDateFrom(p),
-		CreatedAt: a.now(),
+		CreatedAt: now,
 	}
 
+	a.err = ""
 	a.tasks = append(a.tasks, t)
 	a.persist()
+	a.showTaskDate(t.Date)
 	a.selectTaskByID(t.ID)
+	a.status = "Added for " + t.Date
+	return true
 }
 
 // selectTaskByID moves the selection onto the task with the given ID and
@@ -1197,7 +1268,7 @@ func (a *App) selectTaskByID(id string) {
 		}
 		return
 	}
-	for i, t := range a.todayTasks() {
+	for i, t := range a.activeDayTasks() {
 		if t.ID == id {
 			a.todaySelected = i
 			// Selection only follows the cursor in the pane that owns it;
@@ -1316,7 +1387,13 @@ func (a App) notesContentWidth() int {
 }
 
 func (a *App) clampSelections() {
-	todayLen := len(a.todayTasks())
+	if a.simple {
+		entries := a.simpleEntries()
+		a.simpleSelected = max(0, min(a.simpleSelected, len(entries)-1))
+		a.syncSimpleScroll(entries)
+		return
+	}
+	todayLen := len(a.activeDayTasks())
 	if a.todaySelected >= todayLen {
 		a.todaySelected = todayLen - 1
 	}
@@ -1336,7 +1413,13 @@ func (a *App) clampSelections() {
 	if a.notesSelected < 0 {
 		a.notesSelected = 0
 	}
-	a.syncScroll()
+	// Both task panes stay valid even when another pane has focus.
+	focus := a.focus
+	for _, pane := range []focusedPane{focusToday, focusOverdue, focusNotes} {
+		a.focus = pane
+		a.syncScroll()
+	}
+	a.focus = focus
 }
 
 // migrateSelected carries the focused Overdue task onto today's list,
@@ -1390,6 +1473,7 @@ func (a *App) toggleSelected() {
 		}
 	}
 	a.persist()
+	a.clampSelections()
 }
 
 func (a *App) toggleImportantSelected() {
@@ -1406,6 +1490,7 @@ func (a *App) toggleImportantSelected() {
 		}
 	}
 	a.persist()
+	a.clampSelections()
 }
 
 // saveSettings persists every user preference at once. Settings are written
@@ -1437,12 +1522,45 @@ func (a *App) selectedTask() *model.Task {
 	return &list[sel]
 }
 
+// selectedItemID pins a confirmation to its task or note, even when a date
+// change changes the visible list while the user is answering the prompt.
+func (a *App) selectedItemID() string {
+	if a.simple {
+		entries := a.simpleEntries()
+		if a.simpleSelected < 0 || a.simpleSelected >= len(entries) {
+			return ""
+		}
+		entry := entries[a.simpleSelected]
+		if entry.isNote {
+			return "note:" + entry.note.ID
+		}
+		return "task:" + entry.task.ID
+	}
+	if a.focus == focusNotes {
+		if a.notesSelected >= 0 && a.notesSelected < len(a.notes) {
+			return "note:" + a.notes[a.notesSelected].ID
+		}
+		return ""
+	}
+	if task := a.selectedTask(); task != nil {
+		return "task:" + task.ID
+	}
+	return ""
+}
+
 // updateConfirmDelete handles the y/n prompt shown before a delete. Anything
 // other than an explicit confirmation cancels, so a stray keypress can't
 // destroy a task.
 func (a App) updateConfirmDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y", "enter":
+		if a.deleteItemID != "" && a.selectedItemID() != a.deleteItemID {
+			a.mode = modeNormal
+			a.deleteItemID = ""
+			a.status = "Item list changed; delete cancelled"
+			return a, nil
+		}
+		a.deleteItemID = ""
 		switch {
 		case a.simple:
 			a.deleteSimpleSelected()
@@ -1452,9 +1570,11 @@ func (a App) updateConfirmDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			a.deleteSelected()
 		}
 		a.mode = modeNormal
+		a.clampSelections()
 		return a, nil
 	default:
 		a.mode = modeNormal
+		a.deleteItemID = ""
 		a.status = "Delete cancelled"
 		return a, nil
 	}
@@ -1500,7 +1620,7 @@ func (a *App) persist() {
 func (a App) currentList() []model.Task {
 	switch a.focus {
 	case focusToday:
-		return a.todayTasks()
+		return a.activeDayTasks()
 	case focusOverdue:
 		return a.overdueTasks()
 	default:
@@ -1647,6 +1767,7 @@ func (a App) helpGroups() []helpGroup {
 			{"", []helpKey{
 				{"a", "add " + what}, {"tab", "switch to " + map[bool]string{true: "task", false: "note"}[a.simpleNoteMode]},
 				{"space", "toggle"}, {"enter", "edit"}, {"d", "delete"}, {"i", "important"},
+				{"C", a.upcomingSwitchLabel()}, {"I/U", "filters"},
 				{"↑/↓ j/k", "navigate"}, {"S", "settings"}, {"q", "quit"},
 			}},
 		}
@@ -1675,10 +1796,11 @@ func (a App) helpGroups() []helpGroup {
 		}
 	}
 	if a.mode == modeAdding {
-		// One hint for both annotations. The time is position-sensitive
-		// (last field only) and the tag isn't, which is worth saying since
-		// it's the one rule that isn't guessable.
-		hint := "#tag anywhere  ·  HH:MM or HH:MM-HH:MM at the end"
+		// One hint for every annotation. The date, time and due-field are all
+		// position-sensitive (trailing fields, date before time) while the
+		// tag isn't, which is worth saying since it's the one rule that
+		// isn't guessable.
+		hint := "#tag anywhere  ·  MM-DD  ·  HH:MM or HH:MM-HH:MM at the end"
 		return []helpGroup{
 			{"", []helpKey{
 				{"enter", "save"}, {"esc", "cancel"},
@@ -1713,7 +1835,7 @@ func (a App) helpGroups() []helpGroup {
 			{"Chart", []helpKey{
 				{"←/→ h/l", "switch chart"}, {"", a.reportChart.String()},
 			}},
-			{"View", []helpKey{{"tab", "switch pane"}}},
+			{"View", []helpKey{{"tab", "switch pane"}, {"C", a.upcomingSwitchLabel()}}},
 			{"App", []helpKey{
 				{"S", "settings"}, {"q", "quit"},
 			}},
@@ -1739,7 +1861,7 @@ func (a App) helpGroups() []helpGroup {
 	return []helpGroup{
 		{"Task", taskKeys},
 		{"View", []helpKey{
-			{"tab", "switch pane"}, {"↑/↓ j/k", "navigate"}, {"I/U", "filters"},
+			{"tab", "switch pane"}, {"↑/↓ j/k", "navigate"}, {"C", a.upcomingSwitchLabel()}, {"I/U", "filters"},
 		}},
 		// Pomodoro's keys aren't listed here — they're rendered inside the
 		// Pomodoro pane itself, next to the thing they control.
@@ -1859,9 +1981,9 @@ func (a App) renderPage() string {
 
 			filters := filterLabel(a.filterImportant, a.filterUndone)
 
-			today := a.todayTasks()
+			today := a.activeDayTasks()
 			todayVisible := a.visibleRowsFor(focusToday)
-			todayBody := renderTaskList(today, a.todaySelected, a.todayScroll, todayVisible, a.focus == focusToday, false, leftWidth-4, a.now())
+			todayBody := renderTaskList(today, a.todaySelected, a.todayScroll, todayVisible, a.focus == focusToday, false, leftWidth-4, a.now(), a.upcoming)
 			if a.mode == modeAdding {
 				a.input.TextStyle = lipgloss.NewStyle().Foreground(colorText).Background(colorPaneBg)
 				a.input.PlaceholderStyle = lipgloss.NewStyle().Foreground(colorMuted).Background(colorPaneBg)
@@ -1883,12 +2005,12 @@ func (a App) renderPage() string {
 				}
 				todayBody += "\n" + inputLine
 			}
-			todayPane := renderPane(fmt.Sprintf("Today (%d)%s", len(today), filters), todayBody, a.focus == focusToday, leftWidth, todayHeight)
+			todayPane := renderPane(fmt.Sprintf("%s (%d)%s", a.activeDayTitle(), len(today), filters), todayBody, a.focus == focusToday, leftWidth, todayHeight)
 
 			overdue := a.overdueTasks()
 			overdueWidth := leftWidth
 			overdueVisible := a.visibleRowsFor(focusOverdue)
-			overdueBody := renderTaskList(overdue, a.overdueSelected, a.overdueScroll, overdueVisible, a.focus == focusOverdue, true, overdueWidth-4, a.now())
+			overdueBody := renderTaskList(overdue, a.overdueSelected, a.overdueScroll, overdueVisible, a.focus == focusOverdue, true, overdueWidth-4, a.now(), false)
 			overduePane := renderPane(fmt.Sprintf("Overdue (%d)%s", len(overdue), filters), overdueBody, a.focus == focusOverdue, overdueWidth, overdueHeight)
 
 			tasks := lipgloss.JoinVertical(lipgloss.Left, todayPane, overduePane)

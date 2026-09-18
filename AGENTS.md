@@ -737,4 +737,33 @@ Integrated `github.com/lrstanley/bubbletint/v2` with an adapter function, intera
 - **Adaptive tint conversion (`tintToTheme`)**: Bubbletint palettes are dynamically adapted to taskii's 3-layer surface model (`Bg`, `PaneBg`, `Panel`), computing contrast-aware `AppTitleFg` and generating a 5-step monotonic `HeatmapRamp`.
 - **Extensible custom theme support**: Users can drop custom `.json` or `.jsonl` theme files into `data/themes/` or `~/.config/taskii/themes/` supporting both full `Theme` definitions and `bubbletint.Tint` definitions.
 
+## Scheduled tasks (2026-09-03)
 
+Branch `feat/schedule-tasks` starts at `upstream/main` (`85d8699`), independently
+of task editing. Architecture review confirmed that `Task.Date` already owns
+the scheduled day, Today selects equality with the local date, and Overdue
+selects unfinished earlier dates. No model or JSON migration is needed.
+
+- A pure `parseTaskInput` helper accepts `title [MM-DD] [HH:MM]`, preserving
+  the legacy time-only syntax and internal title whitespace. Date-only input
+  is a task; a valid trailing time makes an appointment. Dates choose the next
+  valid occurrence including today; February 29 can advance to a later leap
+  year. Invalid calendar dates retain the input and show a validation error.
+- `Shift+C` switches the Today pane to Upcoming, sorted by date, time, and
+  creation time. The Notes binding still clears the board. Simple mode also
+  supports Upcoming; its current combined list is restored on return.
+- Upcoming rows show the full scheduled date through the shared row renderer.
+  Adding selects the corresponding current/future view and the new task ID.
+  Important/undone filters apply to Upcoming; simple mode now supports them too.
+- Tick and resize handling clamp selections and scroll offsets. Delete
+  confirmations retain the item identity and cancel if a date rollover
+  changed the selected item, including notes in the simple combined list.
+- Parser and view work were delegated independently, then integrated. Added
+  tests cover parsing, leap years, local-date boundaries, list transitions,
+  selection/actions, rendering dimensions, persistence, and report boundaries.
+  README documents the syntax, year resolution, and contextual C binding.
+
+Validation limitation: Go is unavailable in this environment, and downloading
+the toolchain was blocked by network access. The Go tests, build, vet, and
+gofmt must still be run in a Go 1.26.3 environment. Static review and
+`git diff --check` were performed; these do not substitute for executable tests.

@@ -51,6 +51,8 @@ func TestParseDueAnnotation(t *testing.T) {
 	if !dueDatesEnabled {
 		t.Skip("due dates are shelved; see dueDatesEnabled")
 	}
+	now := testNow()
+	today := now.Format(dateFormat)
 	for _, tc := range []struct {
 		name string
 		raw  string
@@ -59,30 +61,30 @@ func TestParseDueAnnotation(t *testing.T) {
 		{
 			name: "due today",
 			raw:  "file the report !0d",
-			want: parsedTask{title: "file the report", kind: model.KindTask, dueSet: true},
+			want: parsedTask{title: "file the report", date: today, kind: model.KindTask, dueSet: true},
 		},
 		{
 			name: "due tomorrow",
 			raw:  "ship it !1d",
-			want: parsedTask{title: "ship it", kind: model.KindTask, dueInDays: 1, dueSet: true},
+			want: parsedTask{title: "ship it", date: today, kind: model.KindTask, dueInDays: 1, dueSet: true},
 		},
 		{
 			// Both end-anchored annotations are accepted in either order:
 			// they're independent, so imposing one would be an arbitrary rule.
 			name: "due then time",
 			raw:  "standup !2d 09:00",
-			want: parsedTask{title: "standup", time: "09:00", kind: model.KindAppointment, dueInDays: 2, dueSet: true},
+			want: parsedTask{title: "standup", date: today, time: "09:00", kind: model.KindAppointment, dueInDays: 2, dueSet: true},
 		},
 		{
 			name: "time then due",
 			raw:  "standup 09:00 !2d",
-			want: parsedTask{title: "standup", time: "09:00", kind: model.KindAppointment, dueInDays: 2, dueSet: true},
+			want: parsedTask{title: "standup", date: today, time: "09:00", kind: model.KindAppointment, dueInDays: 2, dueSet: true},
 		},
 		{
 			name: "with range and tags",
 			raw:  "planning #ops 11:00-12:30 !3d",
 			want: parsedTask{
-				title: "planning #ops", time: "11:00", endTime: "12:30",
+				title: "planning #ops", date: today, time: "11:00", endTime: "12:30",
 				kind: model.KindAppointment, tags: []string{"ops"}, dueInDays: 3, dueSet: true,
 			},
 		},
@@ -91,18 +93,18 @@ func TestParseDueAnnotation(t *testing.T) {
 			// stays part of the title.
 			name: "interior due stays in title",
 			raw:  "check !2d in the docs",
-			want: parsedTask{title: "check !2d in the docs", kind: model.KindTask},
+			want: parsedTask{title: "check !2d in the docs", date: today, kind: model.KindTask},
 		},
 		{
 			name: "no due date",
 			raw:  "plain task",
-			want: parsedTask{title: "plain task", kind: model.KindTask},
+			want: parsedTask{title: "plain task", date: today, kind: model.KindTask},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := parseTaskInput(tc.raw)
-			if !ok {
-				t.Fatalf("parseTaskInput(%q) returned not-ok", tc.raw)
+			got, err := parseTaskInput(tc.raw, now)
+			if err != nil {
+				t.Fatalf("parseTaskInput(%q) returned error: %v", tc.raw, err)
 			}
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("parseTaskInput(%q)\n got %+v\nwant %+v", tc.raw, got, tc.want)
@@ -234,7 +236,7 @@ func TestDueChipRendering(t *testing.T) {
 	row := func(due string) string {
 		return plain(renderTaskLine(
 			model.Task{Title: "Task", Date: "2026-09-13", DueDate: due},
-			false, false, 44, colorPaneBg, testNow()))
+			false, false, 44, colorPaneBg, testNow(), false))
 	}
 
 	for _, tc := range []struct{ due, want string }{
@@ -256,7 +258,7 @@ func TestDueChipRendering(t *testing.T) {
 	}
 	// A task with no deadline gets no chip.
 	if got := plain(renderTaskLine(model.Task{Title: "Task", Date: "2026-09-13"},
-		false, false, 44, colorPaneBg, testNow())); strings.Contains(got, "!") || strings.Contains(got, "‼") {
+		false, false, 44, colorPaneBg, testNow(), false)); strings.Contains(got, "!") || strings.Contains(got, "‼") {
 		t.Errorf("undated task should carry no due chip: %q", got)
 	}
 }
@@ -283,7 +285,7 @@ func TestDueChipColorDiffersFromStar(t *testing.T) {
 
 	row := renderTaskLine(
 		model.Task{Title: "Task", Important: true, Date: "2026-09-13", DueDate: "2026-09-16"},
-		false, false, 44, colorPaneBg, testNow())
+		false, false, 44, colorPaneBg, testNow(), false)
 
 	if fgSeq(colorWarning) == fgSeq(colorPurple) {
 		t.Skip("theme gives ★ and the due chip the same hue; nothing to distinguish")
@@ -298,7 +300,7 @@ func TestDueChipColorDiffersFromStar(t *testing.T) {
 	// A missed deadline switches to the danger hue on top of the ‼ glyph.
 	late := renderTaskLine(
 		model.Task{Title: "Task", Date: "2026-09-13", DueDate: "2026-09-11"},
-		false, false, 44, colorPaneBg, testNow())
+		false, false, 44, colorPaneBg, testNow(), false)
 	if !strings.Contains(late, fgSeq(colorDanger)) {
 		t.Errorf("missed deadline should use the danger colour: %q", late)
 	}
@@ -361,9 +363,9 @@ func TestDueDatesShelved(t *testing.T) {
 	}
 
 	// The parser leaves the annotation alone.
-	p, ok := parseTaskInput("submit the forms #ops !2d")
-	if !ok {
-		t.Fatal("parse failed")
+	p, err := parseTaskInput("submit the forms #ops !2d", testNow())
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
 	}
 	if p.dueSet {
 		t.Error("parser should not recognise !Nd while the feature is shelved")
@@ -379,7 +381,7 @@ func TestDueDatesShelved(t *testing.T) {
 	// No chip is drawn even for a task that carries a stored deadline.
 	row := ansiRe.ReplaceAllString(renderTaskLine(
 		model.Task{Title: "Legacy", Date: "2026-09-16", DueDate: "2026-09-12"},
-		false, false, 46, colorPaneBg, testNow()), "")
+		false, false, 46, colorPaneBg, testNow(), false), "")
 	if strings.Contains(row, "!") || strings.Contains(row, "‼") {
 		t.Errorf("no due chip should render: %q", row)
 	}
