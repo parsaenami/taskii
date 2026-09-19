@@ -16,6 +16,7 @@ func main() {
 	simple := flag.Bool("simple", false, "run a single-pane view: greeting beside one combined list of tasks, overdue items and notes")
 	version := flag.Bool("version", false, "print the version and exit")
 	importDir := flag.String("import-data", "", "merge legacy data from a directory containing tasks.json, notes.json, or settings.json")
+	exportDir := flag.String("export", "", "export tasks, notes, and settings into DIRECTORY/taski_data")
 	flag.Parse()
 
 	if *version {
@@ -31,6 +32,15 @@ func main() {
 			}
 			os.Exit(1)
 		}
+		return
+	}
+	if *exportDir != "" {
+		path, err := model.ExportData(*exportDir)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+		fmt.Println("Exported Taskii data to", path)
 		return
 	}
 

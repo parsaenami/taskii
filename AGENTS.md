@@ -827,3 +827,12 @@ writes now use a same-directory temporary file, sync, and rename. Tests cover
 automatic and partial migration, destination precedence, schema validation,
 source preservation, merge/duplicate/conflict behavior, settings precedence,
 repeated imports, and invalid import directories.
+
+## Data export (2026-09-20)
+
+Added `taskii --export /path/to/export-directory`. It creates a portable
+`taski_data/` snapshot containing `tasks.json`, `notes.json`, and
+`settings.json`, including empty/default files when no data has been saved.
+The export is assembled in a temporary sibling directory and renamed into
+place only after all files are written. An existing `taski_data/` directory is
+never overwritten.

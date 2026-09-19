@@ -71,12 +71,17 @@ Flags:
 taskii --mock     # launch with generated sample data instead of your real data
 taskii --simple   # single-pane view: greeting + one combined list of tasks, overdue items, and notes
 taskii --import-data /path/to/data  # merge tasks, notes, and settings
+taskii --export /path/to/export-directory  # create taski_data/ with all saved data
 ```
 
 The import command processes each recognized JSON file independently. Source-
 only task and note IDs are added; identical IDs are duplicates, and conflicting
 IDs are skipped in favor of existing XDG records. Settings import only when no
 XDG settings file exists. Errors are reported and the command exits nonzero.
+
+The export command creates `/path/to/export-directory/taski_data/` containing
+`tasks.json`, `notes.json`, and `settings.json`. It does not overwrite an
+existing `taski_data` directory.
 
 ## Keybindings
 
