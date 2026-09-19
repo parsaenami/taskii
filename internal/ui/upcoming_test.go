@@ -132,6 +132,26 @@ func TestUpcomingKeyPreservesNotesClearAndSimpleTabs(t *testing.T) {
 	}
 }
 
+func TestUpcomingKeyOnlySwitchesTasksPane(t *testing.T) {
+	for _, focus := range []focusedPane{focusOverdue, focusReports} {
+		a := upcomingTestApp()
+		a.focus = focus
+		a = upcomingKey(a, "C")
+		if a.upcoming {
+			t.Fatalf("C switched Today/Upcoming from pane %d", focus)
+		}
+		if strings.Contains(ansiRe.ReplaceAllString(renderHelpBar(a.helpGroups(), a.width), ""), "Today/Upcoming") {
+			t.Fatalf("pane %d advertises the task-view shortcut", focus)
+		}
+	}
+
+	a := upcomingTestApp()
+	a = upcomingKey(a, "C")
+	if !a.upcoming {
+		t.Fatal("C did not switch views from the Tasks pane")
+	}
+}
+
 func TestUpcomingMidnightRolloverAndPendingDelete(t *testing.T) {
 	for _, simple := range []bool{false, true} {
 		t.Run(fmt.Sprintf("simple=%v", simple), func(t *testing.T) {
@@ -203,6 +223,33 @@ func TestUpcomingDateRenderingAndDimensions(t *testing.T) {
 					}
 				})
 			}
+		}
+	}
+}
+
+func TestTodayPaneTabsShowActiveViewWithoutChangingDimensions(t *testing.T) {
+	for _, upcoming := range []bool{false, true} {
+		a := upcomingTestApp()
+		a.upcoming = upcoming
+		a.tasks = []model.Task{
+			{ID: "today", Title: "Today task", Date: "2026-09-03"},
+			{ID: "future", Title: "Future task", Date: "2026-09-04"},
+		}
+
+		page := a.View()
+		plainPage := ansiRe.ReplaceAllString(page, "")
+		if !strings.Contains(plainPage, "Today │") || !strings.Contains(plainPage, "Upcoming") {
+			t.Fatalf("Today pane is missing its view tabs: %q", plainPage)
+		}
+		active := "▸ Today"
+		if upcoming {
+			active = "▸ Upcoming"
+		}
+		if !strings.Contains(plainPage, active) {
+			t.Fatalf("active tab %q missing", active)
+		}
+		if lipgloss.Width(page) > a.width || lipgloss.Height(page) > a.height {
+			t.Fatalf("view %dx%d exceeds terminal %dx%d", lipgloss.Width(page), lipgloss.Height(page), a.width, a.height)
 		}
 	}
 }

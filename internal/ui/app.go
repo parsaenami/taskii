@@ -551,13 +551,14 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case "C":
-		// Clear the whole board. Capitalised and confirmed, since it discards
-		// everything at once.
-		if a.focus == focusNotes {
+		switch a.focus {
+		case focusNotes:
+			// Clear the whole board. Capitalised and confirmed, since it
+			// discards everything at once.
 			if len(a.notes) > 0 {
 				a.mode = modeConfirmClearNotes
 			}
-		} else {
+		case focusToday:
 			a.toggleUpcoming()
 		}
 		return a, nil
@@ -1823,7 +1824,7 @@ func (a App) helpGroups() []helpGroup {
 			{"Chart", []helpKey{
 				{"←/→ h/l", "switch chart"}, {"", a.reportChart.String()},
 			}},
-			{"View", []helpKey{{"tab", "switch pane"}, {"C", a.upcomingSwitchLabel()}}},
+			{"View", []helpKey{{"tab", "switch pane"}}},
 			{"App", []helpKey{
 				{"S", "settings"}, {"q", "quit"},
 			}},
@@ -1846,11 +1847,15 @@ func (a App) helpGroups() []helpGroup {
 	taskKeys = append(taskKeys,
 		helpKey{"d", "delete"}, helpKey{"i", "important"})
 
+	viewKeys := []helpKey{{"tab", "switch pane"}, {"↑/↓ j/k", "navigate"}}
+	if a.focus == focusToday {
+		viewKeys = append(viewKeys, helpKey{"C", "switch Today/Upcoming"})
+	}
+	viewKeys = append(viewKeys, helpKey{"I/U", "filters"})
+
 	return []helpGroup{
 		{"Task", taskKeys},
-		{"View", []helpKey{
-			{"tab", "switch pane"}, {"↑/↓ j/k", "navigate"}, {"C", a.upcomingSwitchLabel()}, {"I/U", "filters"},
-		}},
+		{"View", viewKeys},
 		// Pomodoro's keys aren't listed here — they're rendered inside the
 		// Pomodoro pane itself, next to the thing they control.
 		{"App", []helpKey{
@@ -1895,6 +1900,11 @@ func (a App) visibleRowsFor(focus focusedPane) int {
 	contentHeight := paneHeight - 2 // border top+bottom
 	// No title row is reserved: the pane title is drawn ON the top border by
 	// renderPane, so it costs no body line.
+	if focus == focusToday && !a.simple {
+		// The normal Today pane has a fixed view-selector row above its list.
+		// Reserve it so switching views does not change the task viewport.
+		contentHeight -= todayTabsHeight
+	}
 	//
 	// renderTaskList always emits a scroll-indicator line (blank when there's
 	// nothing to scroll), so its line is reserved unconditionally here —
@@ -1972,6 +1982,7 @@ func (a App) renderPage() string {
 			today := a.activeDayTasks()
 			todayVisible := a.visibleRowsFor(focusToday)
 			todayBody := renderTaskList(today, a.todaySelected, a.todayScroll, todayVisible, a.focus == focusToday, false, leftWidth-4, a.now(), a.upcoming)
+			todayBody = renderTodayTabs(a.upcoming, leftWidth-4) + "\n" + todayBody
 			if a.mode == modeAdding {
 				a.input.TextStyle = lipgloss.NewStyle().Foreground(colorText).Background(colorPaneBg)
 				a.input.PlaceholderStyle = lipgloss.NewStyle().Foreground(colorMuted).Background(colorPaneBg)
@@ -1993,7 +2004,7 @@ func (a App) renderPage() string {
 				}
 				todayBody += "\n" + inputLine
 			}
-			todayPane := renderPane(fmt.Sprintf("%s (%d)%s", a.activeDayTitle(), len(today), filters), todayBody, a.focus == focusToday, leftWidth, todayHeight)
+			todayPane := renderPane(fmt.Sprintf("Tasks (%d)%s", len(today), filters), todayBody, a.focus == focusToday, leftWidth, todayHeight)
 
 			overdue := a.overdueTasks()
 			overdueWidth := leftWidth

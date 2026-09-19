@@ -785,3 +785,14 @@ right-aligned human phrase (`today`, `tomorrow`, `in N days`, `yesterday`, or
 `N days ago`), truncating the title first while preserving exact row width;
 editor serialization continues using the machine annotation so saving an
 unchanged task preserves its absolute deadline.
+
+## Today/Upcoming tabs (2026-09-19)
+
+Added a visible Today-pane tab strip for the Today and Upcoming views in normal
+layouts. The active tab uses the accent color and a marker; the inactive tab is
+muted. Its fixed row is included in normal Today-pane height budgeting so task
+rows, add mode, scrolling, and pane dimensions remain stable. Simple mode's
+existing task/note tabs and the `C` shortcut remain unchanged. In normal
+layouts, `C` switches Today/Upcoming only while the Tasks pane is focused; it
+is inert and omitted from help in Overdue and Reports, while retaining its
+clear-board action in Notes.
