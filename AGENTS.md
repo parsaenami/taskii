@@ -89,6 +89,15 @@ Keybindings: `a` add, `space`/`enter` toggle done, `d` delete, `↑/↓` or `j/k
 
 ## Status
 
+## Git hooks (2026-09-19)
+
+Added a repository-local Lefthook configuration without Node dependencies. The
+`commit-msg` hook enforces Conventional Commit subjects, and the `pre-commit`
+hook runs `scripts/verify.sh`, which builds, vets, checks Go formatting, and runs
+`go test ./...`; any failure blocks the commit before Git creates it. Lefthook
+can be installed as a standalone binary or with `go install`/a package manager,
+then initialized with `lefthook install`.
+
 Feature-complete and manually verified: Today/Overdue/Reports panes render correctly at multiple terminal sizes, add/toggle/delete work and persist to `data/tasks.json`, overdue tasks render in the warning color, reports (today/week/month progress, 7-day chart, streak) update live. Known minor cleanup item (non-blocking): `internal/ui/keys.go`'s `key.Binding` map isn't wired through `key.Matches` in `app.go` (raw string switch used instead, same effective behavior).
 
 To run: `go run .` from the project root, or `go build -o terminal-dashboard . && ./terminal-dashboard`. Quit with `q`.
