@@ -161,7 +161,7 @@ func NewApp(opts Options) App {
 	}
 
 	ti := textinput.New()
-	ti.Placeholder = "Title  ·  #tag  ·  MM-DD  ·  HH:MM[-HH:MM]"
+	ti.Placeholder = "Title  ·  #tag  ·  MM-DD  ·  HH:MM[-HH:MM]  ·  !Nd"
 	ti.CharLimit = 120
 
 	ta := textarea.New()
@@ -648,10 +648,9 @@ func taskInputText(t model.Task, now time.Time) string {
 	}
 	if days, ok := t.DaysUntilDue(now); dueDatesEnabled && ok {
 		if days < 0 {
-			// Echoed in the same "‼Nd" form the row shows, which
-			// parseDueField accepts — so an overdue task saved unchanged
-			// keeps its actual deadline instead of being rescheduled to
-			// today.
+			// Use the machine-only overdue form parseDueField accepts, so
+			// saving unchanged keeps the actual deadline instead of
+			// rescheduling it to today. Rows display a human phrase instead.
 			val += fmt.Sprintf(" ‼%dd", -days)
 		} else {
 			val += fmt.Sprintf(" !%dd", days)
@@ -1009,10 +1008,6 @@ func (a *App) applyTaskEdit(raw string) bool {
 			a.tasks[i].Time = p.time
 			a.tasks[i].EndTime = p.endTime
 			a.tasks[i].Tags = p.tags
-			// While deadlines are shelved, an edit must LEAVE an existing
-			// DueDate alone: the editor can't show it, so re-assigning from
-			// the parsed text would silently erase a deadline the user set
-			// while the feature was on.
 			if dueDatesEnabled {
 				a.tasks[i].DueDate = a.dueDateFrom(p)
 			}
@@ -1027,16 +1022,10 @@ func (a *App) applyTaskEdit(raw string) bool {
 	return true
 }
 
-// dueDatesEnabled gates the whole "!Nd" deadline feature, which is shelved
-// for now rather than removed: the parser, the list/sort behaviour and the
-// chip renderer are all still here and still tested, and flipping this to
-// true turns them back on in one edit.
-//
-// While it's false, "!2d" is ordinary text in a title, no task is held in
-// Today's list by a deadline, and no chip is drawn. Any DueDate already in a
-// saved tasks.json is left untouched rather than erased, so pausing the
-// feature doesn't destroy data that was entered while it was on.
-const dueDatesEnabled = false
+// dueDatesEnabled keeps the deadline behavior explicit at its existing call
+// sites. Deadlines are active: a trailing !Nd is parsed out of the title,
+// persisted as an absolute date, and keeps an unfinished task in Today.
+const dueDatesEnabled = true
 
 // parsedTask is everything the annotation syntax can pull out of one line of
 // input. Grouped into a struct rather than returned as loose values so
@@ -1168,10 +1157,9 @@ func parseDueField(f string) (days int, ok bool) {
 	}
 	body := f[:len(f)-1]
 
-	// "‼Nd" is the overdue spelling the renderer produces, accepted on input
-	// so that opening an overdue task and saving it unchanged preserves its
-	// real deadline. Without this the editor would show a deadline the
-	// syntax couldn't express and quietly reschedule it on every save.
+	// "‼Nd" is the internal editor spelling for an overdue deadline. Accepting
+	// it preserves the absolute date when an overdue task is saved unchanged;
+	// normal new input continues to use !Nd for today or a future date.
 	sign := 1
 	switch {
 	case strings.HasPrefix(body, "‼"):
@@ -1800,7 +1788,7 @@ func (a App) helpGroups() []helpGroup {
 		// position-sensitive (trailing fields, date before time) while the
 		// tag isn't, which is worth saying since it's the one rule that
 		// isn't guessable.
-		hint := "#tag anywhere  ·  MM-DD  ·  HH:MM or HH:MM-HH:MM at the end"
+		hint := "#tag anywhere  ·  MM-DD  ·  HH:MM[-HH:MM]  ·  !Nd deadline"
 		return []helpGroup{
 			{"", []helpKey{
 				{"enter", "save"}, {"esc", "cancel"},

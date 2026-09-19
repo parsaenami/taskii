@@ -96,6 +96,8 @@ Press `a` in the task pane and append a date, a time, or both:
 | `Call Alex 14:30` | Appointment for today at 14:30 |
 | `Read a chapter 09-10` | Task for September 10 |
 | `Call Alex 09-10 14:30` | Appointment for September 10 at 14:30 |
+| `Submit report !5d` | Task with a deadline five days from today |
+| `Call Alex 09-10 14:30 !1d` | Scheduled appointment due tomorrow |
 
 Dates use `MM-DD` and times use `HH:MM` (24-hour clock). The date is the next
 occurrence of that month and day, including today. A date that has already
@@ -103,6 +105,12 @@ passed rolls forward to next year; `02-29` selects the next valid leap day.
 Impossible dates, such as `02-30`, show an error and keep the input for correction.
 Date and time tokens must be at the end of the title, in that order when both
 are present. A trailing `MM-DD` token is interpreted as a schedule date.
+
+Append `!Nd` to set a deadline `N` calendar days from today: `!0d` is today,
+`!1d` is tomorrow, and `!5d` is five days away. The annotation is removed from
+the task title and stored as an absolute date, so it counts down naturally.
+Deadline tasks remain in Today until completed and show a right-aligned phrase
+such as `today`, `tomorrow`, `in 5 days`, `yesterday`, or `5 days ago`.
 
 `Shift+C` opens **Upcoming**, sorted by date and then appointment time, with
 untimed tasks after appointments on the same day. Each row shows its full date.
@@ -117,7 +125,7 @@ The saved JSON format is unchanged: the scheduled day is stored in `Task.Date`.
 
 ## Features
 
-- **Today / Overdue** — add tasks or timed appointments (type a trailing `14:30` to mark one as an appointment), toggle done, mark important, delete.
+- **Today / Overdue** — add tasks or timed appointments, set deadlines with a trailing `!Nd`, toggle done, mark important, delete.
 - **Upcoming** — schedule tasks with a trailing `MM-DD`, optionally followed by `HH:MM`, and browse future dates with `Shift+C`.
 - **Notes** — a simple multi-line notes board, expandable to full screen.
 - **Pomodoro timer** — start, pause, reset, and skip work/break phases.

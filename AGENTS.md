@@ -767,3 +767,12 @@ Validation limitation: Go is unavailable in this environment, and downloading
 the toolchain was blocked by network access. The Go tests, build, vet, and
 gofmt must still be run in a Go 1.26.3 environment. Static review and
 `git diff --check` were performed; these do not substitute for executable tests.
+
+## Due-date labels re-enabled (2026-09-19)
+
+Re-enabled the existing trailing `!Nd` deadline syntax and absolute-date
+persistence/list semantics. Task rows now reserve a separately styled,
+right-aligned human phrase (`today`, `tomorrow`, `in N days`, `yesterday`, or
+`N days ago`), truncating the title first while preserving exact row width;
+editor serialization continues using the machine annotation so saving an
+unchanged task preserves its absolute deadline.

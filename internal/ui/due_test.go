@@ -48,9 +48,6 @@ func TestParseDueField(t *testing.T) {
 }
 
 func TestParseDueAnnotation(t *testing.T) {
-	if !dueDatesEnabled {
-		t.Skip("due dates are shelved; see dueDatesEnabled")
-	}
 	now := testNow()
 	today := now.Format(dateFormat)
 	for _, tc := range []struct {
@@ -117,9 +114,6 @@ func TestParseDueAnnotation(t *testing.T) {
 // stored as an absolute date, so the countdown the user sees is recomputed
 // each day rather than frozen at whatever was typed.
 func TestDueDateStoredAbsolute(t *testing.T) {
-	if !dueDatesEnabled {
-		t.Skip("due dates are shelved; see dueDatesEnabled")
-	}
 	a := NewApp(Options{})
 	a.noPersist = true
 	a.now = testNow // 2026-09-13
@@ -130,6 +124,9 @@ func TestDueDateStoredAbsolute(t *testing.T) {
 	}
 	if got := a.tasks[0].DueDate; got != "2026-09-15" {
 		t.Fatalf("DueDate = %q, want the resolved absolute date", got)
+	}
+	if got := a.tasks[0].Title; got != "ship it" {
+		t.Fatalf("Title = %q, want deadline annotation removed", got)
 	}
 
 	// The same task, read on later days, counts down on its own.
@@ -158,9 +155,6 @@ func TestDueDateStoredAbsolute(t *testing.T) {
 // the task follows you forward until it's done, instead of falling into
 // Overdue the next morning.
 func TestDueTaskStaysInTodayList(t *testing.T) {
-	if !dueDatesEnabled {
-		t.Skip("due dates are shelved; see dueDatesEnabled")
-	}
 	a := NewApp(Options{})
 	a.noPersist = true
 	a.now = testNow
@@ -201,9 +195,6 @@ func TestDueTaskStaysInTodayList(t *testing.T) {
 // most overdue first, as one continuous urgency gradient rather than an
 // "overdue" block sitting above an "upcoming" one.
 func TestDueTasksSortToTop(t *testing.T) {
-	if !dueDatesEnabled {
-		t.Skip("due dates are shelved; see dueDatesEnabled")
-	}
 	a := NewApp(Options{})
 	a.noPersist = true
 	a.now = testNow // 2026-09-13
@@ -226,12 +217,24 @@ func TestDueTasksSortToTop(t *testing.T) {
 	}
 }
 
-// TestDueChipRendering checks the glyph carries the overdue distinction, so
-// the two states stay apart without relying on colour.
-func TestDueChipRendering(t *testing.T) {
-	if !dueDatesEnabled {
-		t.Skip("due dates are shelved; see dueDatesEnabled")
+func TestRelativeDuePhrase(t *testing.T) {
+	for _, tc := range []struct {
+		days int
+		want string
+	}{
+		{-12, "12 days ago"},
+		{-1, "yesterday"},
+		{0, "today"},
+		{1, "tomorrow"},
+		{5, "in 5 days"},
+	} {
+		if got := relativeDuePhrase(tc.days); got != tc.want {
+			t.Errorf("relativeDuePhrase(%d) = %q, want %q", tc.days, got, tc.want)
+		}
 	}
+}
+
+func TestDuePhraseRendering(t *testing.T) {
 	plain := func(s string) string { return ansiRe.ReplaceAllString(s, "") }
 	row := func(due string) string {
 		return plain(renderTaskLine(
@@ -240,39 +243,52 @@ func TestDueChipRendering(t *testing.T) {
 	}
 
 	for _, tc := range []struct{ due, want string }{
-		{"2026-09-16", "!3d"},
-		{"2026-09-14", "!1d"},
-		{"2026-09-13", "!0d"},
-		{"2026-09-12", "‼1d"},
-		{"2026-09-01", "‼12d"},
+		{"2026-09-18", "in 5 days"},
+		{"2026-09-14", "tomorrow"},
+		{"2026-09-13", "today"},
+		{"2026-09-12", "yesterday"},
+		{"2026-09-01", "12 days ago"},
 	} {
-		if got := row(tc.due); !strings.Contains(got, tc.want) {
-			t.Errorf("due %s: row %q should contain %q", tc.due, got, tc.want)
+		got := row(tc.due)
+		if !strings.HasSuffix(got, tc.want) {
+			t.Errorf("due %s: row %q should end with %q", tc.due, got, tc.want)
+		}
+		if width := lipgloss.Width(got); width != 44 {
+			t.Errorf("due %s: row width = %d, want 44", tc.due, width)
 		}
 	}
 
-	// The count stays positive past the deadline: "!1d" (due tomorrow) and
-	// "‼1d" (one day late) must not be told apart by a minus sign alone.
-	if got := row("2026-09-12"); strings.Contains(got, "-1d") {
-		t.Errorf("overdue should not use a negative count: %q", got)
-	}
-	// A task with no deadline gets no chip.
+	// A task with no deadline gets no due phrase.
 	if got := plain(renderTaskLine(model.Task{Title: "Task", Date: "2026-09-13"},
-		false, false, 44, colorPaneBg, testNow(), false)); strings.Contains(got, "!") || strings.Contains(got, "‼") {
-		t.Errorf("undated task should carry no due chip: %q", got)
+		false, false, 44, colorPaneBg, testNow(), false)); strings.Contains(got, "today") || strings.Contains(got, "tomorrow") || strings.Contains(got, "days") {
+		t.Errorf("undated task should carry no due phrase: %q", got)
+	}
+}
+
+func TestDuePhraseTruncatesTitleFirst(t *testing.T) {
+	const width = 32
+	plain := ansiRe.ReplaceAllString(renderTaskLine(
+		model.Task{Title: "A deliberately very long task title", Date: "2026-09-13", DueDate: "2026-09-18"},
+		false, false, width, colorPaneBg, testNow(), false), "")
+
+	if got := lipgloss.Width(plain); got != width {
+		t.Fatalf("row width = %d, want %d: %q", got, width, plain)
+	}
+	if !strings.HasSuffix(plain, "in 5 days") {
+		t.Errorf("due phrase was not pinned at right edge: %q", plain)
+	}
+	if !strings.Contains(plain, "…") {
+		t.Errorf("title was not truncated before due phrase: %q", plain)
 	}
 }
 
 // TestDueDateRoundTrip pins that opening the editor and saving unchanged is a
 // no-op — including for an overdue task, whose deadline would otherwise be
 // silently rescheduled to today on every save.
-// The deadline chip must not share the ★'s colour: the two sit side by side
+// The deadline phrase must not share the ★'s colour: the two sit on one row
 // on a row often enough that one hue would read as a single compound symbol
 // rather than two independent facts.
-func TestDueChipColorDiffersFromStar(t *testing.T) {
-	if !dueDatesEnabled {
-		t.Skip("due dates are shelved; see dueDatesEnabled")
-	}
+func TestDuePhraseColorDiffersFromStar(t *testing.T) {
 	old := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	defer lipgloss.SetColorProfile(old)
@@ -288,16 +304,16 @@ func TestDueChipColorDiffersFromStar(t *testing.T) {
 		false, false, 44, colorPaneBg, testNow(), false)
 
 	if fgSeq(colorWarning) == fgSeq(colorPurple) {
-		t.Skip("theme gives ★ and the due chip the same hue; nothing to distinguish")
+		t.Skip("theme gives ★ and the due phrase the same hue; nothing to distinguish")
 	}
 	if !strings.Contains(row, fgSeq(colorWarning)) {
 		t.Errorf("star colour missing from the row: %q", row)
 	}
 	if !strings.Contains(row, fgSeq(colorPurple)) {
-		t.Errorf("due chip colour missing from the row: %q", row)
+		t.Errorf("due phrase colour missing from the row: %q", row)
 	}
 
-	// A missed deadline switches to the danger hue on top of the ‼ glyph.
+	// A missed deadline switches to the danger hue.
 	late := renderTaskLine(
 		model.Task{Title: "Task", Date: "2026-09-13", DueDate: "2026-09-11"},
 		false, false, 44, colorPaneBg, testNow(), false)
@@ -307,32 +323,37 @@ func TestDueChipColorDiffersFromStar(t *testing.T) {
 }
 
 func TestDueDateRoundTrip(t *testing.T) {
-	if !dueDatesEnabled {
-		t.Skip("due dates are shelved; see dueDatesEnabled")
-	}
-	for _, due := range []string{"2026-09-16", "2026-09-13", "2026-09-11", "2026-09-01"} {
+	for _, tc := range []struct {
+		due   string
+		field string
+	}{
+		{"2026-09-16", "!3d"},
+		{"2026-09-13", "!0d"},
+		{"2026-09-11", "‼2d"},
+		{"2026-09-01", "‼12d"},
+	} {
 		a := NewApp(Options{})
 		a.noPersist = true
 		a.now = testNow
-		a.tasks = []model.Task{{ID: "x", Title: "Task", Date: "2026-09-13", DueDate: due}}
+		a.tasks = []model.Task{{ID: "x", Title: "Task", Date: "2026-09-13", DueDate: tc.due}}
 		a.focus = focusToday
 
 		m, _ := a.updateNormal(tea.KeyMsg{Type: tea.KeyEnter})
 		a = m.(App)
 		shown := a.input.Value()
+		if shown != "Task "+tc.field {
+			t.Errorf("editor showed %q, want machine syntax %q", shown, "Task "+tc.field)
+		}
 
 		m, _ = a.updateAdding(tea.KeyMsg{Type: tea.KeyEnter})
 		a = m.(App)
-		if got := a.tasks[0].DueDate; got != due {
-			t.Errorf("editor showed %q; deadline moved %s -> %s", shown, due, got)
+		if got := a.tasks[0].DueDate; got != tc.due {
+			t.Errorf("editor showed %q; deadline moved %s -> %s", shown, tc.due, got)
 		}
 	}
 }
 
 func TestEditClearsDueDate(t *testing.T) {
-	if !dueDatesEnabled {
-		t.Skip("due dates are shelved; see dueDatesEnabled")
-	}
 	a := NewApp(Options{})
 	a.noPersist = true
 	a.now = testNow
@@ -347,70 +368,5 @@ func TestEditClearsDueDate(t *testing.T) {
 
 	if a.tasks[0].HasDueDate() {
 		t.Errorf("deleting the annotation should clear the deadline: %+v", a.tasks[0])
-	}
-}
-
-// TestDueDatesShelved pins the paused state: with dueDatesEnabled off the
-// feature must be fully inert — "!2d" is ordinary title text, no task is held
-// in Today's list by a deadline, and no chip is drawn — while a DueDate
-// already saved from when the feature was on is preserved rather than erased.
-//
-// The mirror of the guards on the tests above: those skip when the feature is
-// off, this one skips when it's on, so exactly one set runs either way.
-func TestDueDatesShelved(t *testing.T) {
-	if dueDatesEnabled {
-		t.Skip("due dates are enabled; the active-feature tests cover this")
-	}
-
-	// The parser leaves the annotation alone.
-	p, err := parseTaskInput("submit the forms #ops !2d", testNow())
-	if err != nil {
-		t.Fatalf("parse failed: %v", err)
-	}
-	if p.dueSet {
-		t.Error("parser should not recognise !Nd while the feature is shelved")
-	}
-	if p.title != "submit the forms #ops !2d" {
-		t.Errorf("title = %q, want the annotation left as text", p.title)
-	}
-	// Other annotations are unaffected.
-	if len(p.tags) != 1 || p.tags[0] != "ops" {
-		t.Errorf("tags = %v, want the tag still parsed", p.tags)
-	}
-
-	// No chip is drawn even for a task that carries a stored deadline.
-	row := ansiRe.ReplaceAllString(renderTaskLine(
-		model.Task{Title: "Legacy", Date: "2026-09-16", DueDate: "2026-09-12"},
-		false, false, 46, colorPaneBg, testNow(), false), "")
-	if strings.Contains(row, "!") || strings.Contains(row, "‼") {
-		t.Errorf("no due chip should render: %q", row)
-	}
-
-	// A stale task with a stored deadline behaves like any other stale task.
-	a := NewApp(Options{})
-	a.noPersist = true
-	a.now = testNow
-	a.tasks = []model.Task{{ID: "old", Title: "Stale", Date: "2026-09-09", DueDate: "2026-09-10"}}
-	if got := len(a.todayTasks()); got != 0 {
-		t.Errorf("Today should hold %d tasks, want 0", got)
-	}
-	if got := a.overdueTasks(); len(got) != 1 {
-		t.Errorf("Overdue = %v, want the stale task", got)
-	}
-
-	// Editing must not erase the stored deadline — the editor can't show it,
-	// so re-assigning from the parsed text would silently destroy it.
-	a.focus = focusOverdue
-	m, _ := a.updateNormal(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
-	a = m.(App)
-	a.taskEditID = "old"
-	a.input.SetValue("Stale renamed")
-	m, _ = a.updateAdding(tea.KeyMsg{Type: tea.KeyEnter})
-	a = m.(App)
-	if a.tasks[0].DueDate != "2026-09-10" {
-		t.Errorf("edit erased the stored deadline: %+v", a.tasks[0])
-	}
-	if a.tasks[0].Title != "Stale renamed" {
-		t.Errorf("edit did not apply: %+v", a.tasks[0])
 	}
 }

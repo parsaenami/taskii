@@ -84,7 +84,7 @@ func mockTasks(now time.Time) []model.Task {
 		// Time range vs. a point in time (m3 above is the point form).
 		entry("m13", "Sprint planning 11:00-12:30", day(0), false, false),
 
-		// Deadline examples live behind dueDatesEnabled; see below.
+		// Deadline examples are appended below.
 		entry("m14", "Submit the compliance forms #ops", day(0), false, true),
 		entry("m15", "Renew the SSL certificate #infra", day(0), false, false),
 		entry("m16", "Book the offsite venue", day(0), false, false),
@@ -99,10 +99,7 @@ func mockTasks(now time.Time) []model.Task {
 		entry("m20", "Update the runbook #infra", day(-9), false, false),
 	}
 
-	// Deadline examples: the full countdown, from still-ahead ("!Nd") to
-	// already missed ("‼Nd"). Gated with the feature itself — with deadlines
-	// off, a "!2d" would survive parsing as literal title text and read as a
-	// bug rather than a demo.
+	// Deadline examples cover the full countdown from still-ahead to missed.
 	//
 	// The missed ones set DueDate directly because the "!Nd" syntax only
 	// accepts offsets into the future: a task reaches the overdue state by

@@ -571,11 +571,8 @@ func applyTheme(t Theme) {
 	migratedStyle = lipgloss.NewStyle().Foreground(colorDanger).Bold(true).Background(colorPaneBg)
 	tagStyle = lipgloss.NewStyle().Foreground(colorAccent).Background(colorPaneBg)
 	// An upcoming deadline gets its own hue rather than sharing the ★'s
-	// warning amber: the two markers frequently sit side by side on one row,
-	// and in the same colour they read as one compound symbol instead of two
-	// independent facts. A missed deadline is danger red — but the ‼ glyph
-	// already separates the two states on its own, so the colours reinforce
-	// rather than carry the meaning.
+	// warning amber. A missed deadline uses danger red, retaining a distinct
+	// visual treatment even though both are rendered as human phrases.
 	dueStyle = lipgloss.NewStyle().Bold(true).Foreground(colorPurple).Background(colorPaneBg)
 	dueOverdueStyle = lipgloss.NewStyle().Bold(true).Foreground(colorDanger).Background(colorPaneBg)
 

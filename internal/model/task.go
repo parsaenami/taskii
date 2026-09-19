@@ -61,13 +61,14 @@ type Task struct {
 	// DueDate is the deadline entered as "!Nd" (N days from when it was
 	// typed), stored as an absolute YYYY-MM-DD rather than the relative
 	// offset. The countdown the user sees is recomputed from it each day, so
-	// "!2d" entered today shows "!1d" tomorrow without anything having to
-	// rewrite the task. Storing the offset instead would freeze the number.
+	// "in 2 days" today becomes "tomorrow" the next day without anything
+	// having to rewrite the task. Storing the offset would freeze the number.
 	//
 	// A task with a due date stays in Today's list until its deadline passes
 	// — and beyond, since a missed deadline is exactly what most needs
 	// looking at — so this is the one field that overrides Date for list
-	// membership. Empty means no deadline.
+	// membership. Empty means no deadline. The UI presents this as a relative
+	// phrase ("today", "tomorrow", "in N days", or "N days ago").
 	DueDate string `json:"due_date,omitempty"`
 }
 

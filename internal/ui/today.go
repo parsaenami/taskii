@@ -148,20 +148,14 @@ func renderTaskLine(t model.Task, selected bool, overdue bool, width int, surfac
 	}
 	title := t.Title
 
-	// The deadline chip: "!Nd" while the deadline is still ahead, "‼Nd" once
-	// it has been missed. The glyph — not the colour — is what carries the
-	// distinction, so the two states stay apart in a monochrome terminal and
-	// for anyone who can't separate the two hues. The count stays positive
-	// in both directions, which keeps "!1d" (due tomorrow) from having to be
-	// told apart from "-1d" (a day late) by a single character.
+	// The deadline is a human-readable suffix pinned to the far right. Its
+	// style still distinguishes upcoming from missed deadlines independently
+	// of the title and importance styles.
 	duePlain := ""
 	dueOverdue := false
 	if days, ok := t.DaysUntilDue(now); dueDatesEnabled && ok {
-		if days < 0 {
-			duePlain, dueOverdue = fmt.Sprintf("‼%dd", -days), true
-		} else {
-			duePlain = fmt.Sprintf("!%dd", days)
-		}
+		duePlain = relativeDuePhrase(days)
+		dueOverdue = days < 0
 	}
 
 	if width > 0 {
@@ -182,24 +176,22 @@ func renderTaskLine(t model.Task, selected bool, overdue bool, width int, surfac
 		b.WriteString(migratedStyle.Copy().Background(bg).Render(migratedPlain))
 		b.WriteString(style.Render(" "))
 	}
-	if duePlain != "" {
-		ds := dueStyle
-		if dueOverdue {
-			ds = dueOverdueStyle
-		}
-		b.WriteString(ds.Copy().Background(bg).Render(duePlain))
-		b.WriteString(style.Render(" "))
-	}
 	// The title keeps its "#tag" words exactly where they were typed; only
 	// their colour changes. Moving them to the end would rewrite the user's
 	// sentence — "review #api docs" reads differently from "review docs #api".
 	b.WriteString(renderTitleWithTags(title, style, bg))
 
 	if width > 0 {
-		rendered := b.String()
-		if pad := width - lipgloss.Width(rendered); pad > 0 {
+		if pad := width - lipgloss.Width(b.String()) - lipgloss.Width(duePlain); pad > 0 {
 			b.WriteString(style.Render(strings.Repeat(" ", pad)))
 		}
+	}
+	if duePlain != "" {
+		ds := dueStyle
+		if dueOverdue {
+			ds = dueOverdueStyle
+		}
+		b.WriteString(ds.Copy().Background(bg).Render(duePlain))
 	}
 
 	line := b.String()
@@ -207,6 +199,22 @@ func renderTaskLine(t model.Task, selected bool, overdue bool, width int, surfac
 		return truncateANSI(line, width)
 	}
 	return line
+}
+
+func relativeDuePhrase(days int) string {
+	switch days {
+	case -1:
+		return "yesterday"
+	case 0:
+		return "today"
+	case 1:
+		return "tomorrow"
+	default:
+		if days < 0 {
+			return fmt.Sprintf("%d days ago", -days)
+		}
+		return fmt.Sprintf("in %d days", days)
+	}
 }
 
 // fitSegmentsToWidth measures the plain (unstyled) assembled line and, if it
@@ -225,10 +233,11 @@ func fitSegmentsToWidth(prefix, check, timePlain, starPlain, migratedPlain, dueP
 		if migratedPlain != "" {
 			s += migratedPlain + " "
 		}
+		s += title
 		if duePlain != "" {
-			s += duePlain + " "
+			s += " " + duePlain
 		}
-		return s + title
+		return s
 	}
 	if lipgloss.Width(assemble(title)) <= w {
 		return prefix, check, timePlain, starPlain, migratedPlain, duePlain, title
