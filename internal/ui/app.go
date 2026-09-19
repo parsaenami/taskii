@@ -103,8 +103,7 @@ type App struct {
 
 // Options configures NewApp for non-default startup modes.
 type Options struct {
-	// Mock runs the app against generated sample data: no read from or write
-	// to data/tasks.json, so a demo/screenshot run never touches real data.
+	// Mock runs the app against generated sample data and never touches real data.
 	Mock bool
 	// Simple renders a single full-screen pane: the greeting in a fixed left
 	// column, and one list merging today's tasks, overdue tasks and notes in

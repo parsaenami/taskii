@@ -52,7 +52,18 @@ go run .
 taskii
 ```
 
-Data is stored in `data/tasks.json`, `data/notes.json`, and `data/settings.json` in the current directory, created automatically on first run.
+Data is stored automatically in the standard XDG locations, independent of the
+current working directory:
+
+- Tasks and notes: `$XDG_DATA_HOME/taskii/tasks.json` and
+  `$XDG_DATA_HOME/taskii/notes.json`
+- Settings: `$XDG_CONFIG_HOME/taskii/settings.json`
+
+When the XDG environment variables are unset, the platform defaults are used
+(for example, `~/.local/share` and `~/.config` on Linux). If upgrading from a
+version that stored files under the launch directory's `data/` folder, move
+`tasks.json` and `notes.json` to the data path above and `settings.json` to the
+config path above.
 
 Flags:
 

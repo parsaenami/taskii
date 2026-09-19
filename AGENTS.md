@@ -796,3 +796,17 @@ existing task/note tabs and the `C` shortcut remain unchanged. In normal
 layouts, `C` switches Today/Upcoming only while the Tasks pane is focused; it
 is inert and omitted from help in Overdue and Reports, while retaining its
 clear-board action in Notes.
+
+## XDG persistence paths (2026-09-19)
+
+Fixed issue #6 by moving persistence out of the process working directory.
+`tasks.json` and `notes.json` now live under the platform's XDG data home in
+`taskii/`; `settings.json` lives under the XDG config home in `taskii/`.
+The path helpers use `xdg.DataFile` and `xdg.ConfigFile`, propagating directory
+resolution errors through persistence operations. `github.com/adrg/xdg` is now
+a direct dependency. Focused model tests save in one working directory and load
+in another, and the UI test process uses temporary XDG homes so tests cannot
+read or overwrite real user data. Existing project-local files are not migrated
+automatically because the former path was ambiguous and depended on the launch
+directory; the README documents the one-time manual move. `go test ./...`,
+`go vet ./...`, `go build ./...`, `gofmt -l .`, and `git diff --check` all pass.

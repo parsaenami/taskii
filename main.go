@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	mock := flag.Bool("mock", false, "run with generated sample data instead of loading/saving data/tasks.json")
+	mock := flag.Bool("mock", false, "run with generated sample data instead of loading/saving real data")
 	simple := flag.Bool("simple", false, "run a single-pane view: greeting beside one combined list of tasks, overdue items and notes")
 	version := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()

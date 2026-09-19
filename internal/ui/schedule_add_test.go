@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/adrg/xdg"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"taskii/internal/model"
@@ -79,6 +80,9 @@ func TestInvalidScheduledInputCanBeCorrected(t *testing.T) {
 }
 
 func TestScheduledTaskPersistsExistingDateField(t *testing.T) {
+	t.Cleanup(xdg.Reload)
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	xdg.Reload()
 	t.Chdir(t.TempDir())
 	a := NewApp(Options{Mock: true})
 	a.tasks = nil

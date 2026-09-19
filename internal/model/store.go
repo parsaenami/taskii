@@ -6,10 +6,12 @@ import (
 	"path/filepath"
 )
 
-const dataPath = "data/tasks.json"
-
 func Load() ([]Task, error) {
-	b, err := os.ReadFile(dataPath)
+	path, err := dataPath("tasks.json")
+	if err != nil {
+		return nil, err
+	}
+	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []Task{}, nil
@@ -27,12 +29,16 @@ func Load() ([]Task, error) {
 }
 
 func Save(tasks []Task) error {
-	if err := os.MkdirAll(filepath.Dir(dataPath), 0o755); err != nil {
+	path, err := dataPath("tasks.json")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 	b, err := json.MarshalIndent(tasks, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dataPath, b, 0o644)
+	return os.WriteFile(path, b, 0o644)
 }
