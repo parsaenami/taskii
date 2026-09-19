@@ -60,17 +60,23 @@ current working directory:
 - Settings: `$XDG_CONFIG_HOME/taskii/settings.json`
 
 When the XDG environment variables are unset, the platform defaults are used
-(for example, `~/.local/share` and `~/.config` on Linux). If upgrading from a
-version that stored files under the launch directory's `data/` folder, move
-`tasks.json` and `notes.json` to the data path above and `settings.json` to the
-config path above.
+(for example, `~/.local/share` and `~/.config` on Linux). On normal startup,
+taskii automatically validates and copies missing legacy files from the current
+working directory's `data/` directory. Existing XDG files win and sources are
+never changed. Use `--import-data` for another legacy directory.
 
 Flags:
 
 ```bash
 taskii --mock     # launch with generated sample data instead of your real data
 taskii --simple   # single-pane view: greeting + one combined list of tasks, overdue items, and notes
+taskii --import-data /path/to/data  # merge tasks, notes, and settings
 ```
+
+The import command processes each recognized JSON file independently. Source-
+only task and note IDs are added; identical IDs are duplicates, and conflicting
+IDs are skipped in favor of existing XDG records. Settings import only when no
+XDG settings file exists. Errors are reported and the command exits nonzero.
 
 ## Keybindings
 

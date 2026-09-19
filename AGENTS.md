@@ -806,7 +806,24 @@ The path helpers use `xdg.DataFile` and `xdg.ConfigFile`, propagating directory
 resolution errors through persistence operations. `github.com/adrg/xdg` is now
 a direct dependency. Focused model tests save in one working directory and load
 in another, and the UI test process uses temporary XDG homes so tests cannot
-read or overwrite real user data. Existing project-local files are not migrated
-automatically because the former path was ambiguous and depended on the launch
-directory; the README documents the one-time manual move. `go test ./...`,
-`go vet ./...`, `go build ./...`, `gofmt -l .`, and `git diff --check` all pass.
+read or overwrite real user data. `go test ./...`, `go vet ./...`,
+`go build ./...`, `gofmt -l .`, and `git diff --check` all pass.
+
+## Legacy data migration and import (2026-09-20)
+
+The first normal launch after upgrading checks only the current working
+directory's `data/` folder and atomically copies each valid missing legacy file
+to its XDG destination. Tasks, notes, and settings migrate independently;
+existing XDG files always win, malformed files produce a non-fatal startup
+warning, and source files are never modified. `--mock`, `--version`, and the
+explicit import command do not trigger startup migration.
+
+Added `taskii --import-data /path/to/data` for users who previously launched
+from multiple directories. Tasks and notes merge by stable ID: source-only
+records are added, identical IDs are counted as duplicates, conflicting IDs
+are skipped in favor of XDG data, and repeat imports are idempotent. Settings
+are imported only when XDG settings do not already exist. All regular JSON
+writes now use a same-directory temporary file, sync, and rename. Tests cover
+automatic and partial migration, destination precedence, schema validation,
+source preservation, merge/duplicate/conflict behavior, settings precedence,
+repeated imports, and invalid import directories.

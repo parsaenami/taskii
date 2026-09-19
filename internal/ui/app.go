@@ -109,11 +109,13 @@ type Options struct {
 	// column, and one list merging today's tasks, overdue tasks and notes in
 	// creation order beside it.
 	Simple bool
+	// StartupWarning is a non-fatal persistence warning shown in the status area.
+	StartupWarning string
 }
 
 func NewApp(opts Options) App {
 	var tasks []model.Task
-	errMsg := ""
+	errMsg := opts.StartupWarning
 
 	if opts.Mock {
 		tasks = mockTasks(time.Now())
