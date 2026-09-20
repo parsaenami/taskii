@@ -2,13 +2,19 @@ package model
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 type Settings struct {
 	Theme  string `json:"theme,omitempty"`
 	Layout string `json:"layout,omitempty"`
+	// Nil means the legacy default. A pointer distinguishes Sunday (0) from
+	// an omitted week start; an empty non-nil workday set is invalid.
+	Workdays  []time.Weekday `json:"workdays,omitempty"`
+	WeekStart *time.Weekday  `json:"week_start,omitempty"`
 
 	// Pomodoro durations are stored in minutes. Zero means "use the built-in
 	// default" — LoadSettings never fabricates them, so an old settings file
@@ -18,6 +24,34 @@ type Settings struct {
 	PomodoroLongBreakMinutes  int  `json:"pomodoroLongBreakMinutes,omitempty"`
 	PomodoroLongBreakEvery    int  `json:"pomodoroLongBreakEvery,omitempty"`
 	PomodoroAutoStartNext     bool `json:"pomodoroAutoStartNext,omitempty"`
+}
+
+var defaultWorkdays = []time.Weekday{time.Monday, time.Tuesday, time.Wednesday, time.Thursday, time.Friday}
+
+func (s Settings) EffectiveWorkdays() []time.Weekday {
+	if s.Workdays == nil {
+		return append([]time.Weekday(nil), defaultWorkdays...)
+	}
+	return append([]time.Weekday(nil), s.Workdays...)
+}
+
+func (s Settings) EffectiveWeekStart() time.Weekday {
+	if s.WeekStart == nil {
+		return time.Monday
+	}
+	return *s.WeekStart
+}
+
+func (s Settings) ValidateCalendar() error {
+	if s.Workdays != nil {
+		if err := ValidateWeekdays(s.Workdays); err != nil {
+			return err
+		}
+	}
+	if s.WeekStart != nil && (*s.WeekStart < time.Sunday || *s.WeekStart > time.Saturday) {
+		return fmt.Errorf("invalid week start %d", *s.WeekStart)
+	}
+	return nil
 }
 
 func LoadSettings() (Settings, error) {
@@ -39,10 +73,16 @@ func LoadSettings() (Settings, error) {
 	if err := json.Unmarshal(b, &s); err != nil {
 		return Settings{}, err
 	}
+	if err := s.ValidateCalendar(); err != nil {
+		return Settings{}, err
+	}
 	return s, nil
 }
 
 func SaveSettings(s Settings) error {
+	if err := s.ValidateCalendar(); err != nil {
+		return err
+	}
 	path, err := configPath("settings.json")
 	if err != nil {
 		return err

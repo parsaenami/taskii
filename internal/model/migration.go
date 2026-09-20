@@ -42,7 +42,7 @@ func MigrateLegacyData() MigrationReport {
 
 func migrateLegacyDir(dir string) MigrationReport {
 	var report MigrationReport
-	for _, name := range []string{"tasks.json", "notes.json", "settings.json"} {
+	for _, name := range []string{"tasks.json", "notes.json", "routines.json", "settings.json"} {
 		src := legacyPath(dir, name)
 		if _, err := os.Stat(src); err != nil {
 			if !os.IsNotExist(err) {
@@ -81,11 +81,12 @@ func migrateLegacyDir(dir string) MigrationReport {
 }
 
 type ImportReport struct {
-	TasksAdded, TasksDuplicate, TasksConflict int
-	NotesAdded, NotesDuplicate, NotesConflict int
-	SettingsResult                            string
-	Results                                   []string
-	Errors                                    []error
+	TasksAdded, TasksDuplicate, TasksConflict          int
+	NotesAdded, NotesDuplicate, NotesConflict          int
+	RoutinesAdded, RoutinesDuplicate, RoutinesConflict int
+	SettingsResult                                     string
+	Results                                            []string
+	Errors                                             []error
 }
 
 // ImportData merges recognized files from dir into XDG storage. Existing
@@ -100,7 +101,7 @@ func ImportData(dir string) (ImportReport, error) {
 		return report, errors.New("import source is not a directory")
 	}
 	recognized := 0
-	for _, name := range []string{"tasks.json", "notes.json", "settings.json"} {
+	for _, name := range []string{"tasks.json", "notes.json", "routines.json", "settings.json"} {
 		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
 			recognized++
 		} else if !os.IsNotExist(err) {
@@ -110,7 +111,7 @@ func ImportData(dir string) (ImportReport, error) {
 	if recognized == 0 {
 		return report, errors.New("import source contains no recognized data files")
 	}
-	for _, name := range []string{"tasks.json", "notes.json", "settings.json"} {
+	for _, name := range []string{"tasks.json", "notes.json", "routines.json", "settings.json"} {
 		src := filepath.Join(dir, name)
 		if _, err := os.Stat(src); os.IsNotExist(err) {
 			continue
@@ -120,7 +121,13 @@ func ImportData(dir string) (ImportReport, error) {
 			report.Errors = append(report.Errors, fmt.Errorf("%s: read: %w", name, err))
 			continue
 		}
-		if err := validateJSON(name, b); err != nil {
+		var validationErr error
+		if name == "routines.json" {
+			validationErr = validateRoutineJSON(b, false)
+		} else {
+			validationErr = validateJSON(name, b)
+		}
+		if err := validationErr; err != nil {
 			report.Errors = append(report.Errors, fmt.Errorf("%s: %w", name, err))
 			continue
 		}
@@ -129,6 +136,8 @@ func ImportData(dir string) (ImportReport, error) {
 			mergeTasks(b, &report)
 		case "notes.json":
 			mergeNotes(b, &report)
+		case "routines.json":
+			mergeRoutines(b, &report)
 		case "settings.json":
 			importSettings(b, &report)
 		}
@@ -158,15 +167,82 @@ func validateJSON(name string, b []byte) error {
 		if err := json.Unmarshal(b, &notes); err != nil {
 			return fmt.Errorf("invalid note data: %w", err)
 		}
+	case "routines.json":
+		return validateRoutineJSON(b, true)
 	case "settings.json":
 		var settings Settings
 		if err := json.Unmarshal(b, &settings); err != nil {
+			return fmt.Errorf("invalid settings data: %w", err)
+		}
+		if err := settings.ValidateCalendar(); err != nil {
 			return fmt.Errorf("invalid settings data: %w", err)
 		}
 	default:
 		return fmt.Errorf("unrecognized data file %q", name)
 	}
 	return nil
+}
+
+func validateRoutineJSON(b []byte, unique bool) error {
+	var routines []Routine
+	if err := json.Unmarshal(b, &routines); err != nil {
+		return fmt.Errorf("invalid routine data: %w", err)
+	}
+	if routines == nil {
+		return errors.New("invalid routine data: expected array")
+	}
+	if unique {
+		if err := ValidateRoutines(routines); err != nil {
+			return fmt.Errorf("invalid routine data: %w", err)
+		}
+		return nil
+	}
+	// Imports merge each entry by ID, just like tasks and notes. Duplicate IDs
+	// in the source become duplicate/conflict counts rather than failing all.
+	for i, routine := range routines {
+		if err := routine.Validate(); err != nil {
+			return fmt.Errorf("invalid routine %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
+func mergeRoutines(b []byte, r *ImportReport) {
+	var source []Routine
+	if err := json.Unmarshal(b, &source); err != nil {
+		r.Errors = append(r.Errors, fmt.Errorf("routines.json: %w", err))
+		return
+	}
+	existing, err := LoadRoutines()
+	if err != nil {
+		r.Errors = append(r.Errors, fmt.Errorf("routines.json destination: %w", err))
+		return
+	}
+	byID := make(map[string]Routine, len(existing))
+	for _, item := range existing {
+		byID[item.ID] = item
+	}
+	added := 0
+	for _, item := range source {
+		if old, ok := byID[item.ID]; ok {
+			if reflect.DeepEqual(old, item) {
+				r.RoutinesDuplicate++
+			} else {
+				r.RoutinesConflict++
+			}
+			continue
+		}
+		existing = append(existing, item)
+		byID[item.ID] = item
+		added++
+	}
+	if added > 0 {
+		if err := SaveRoutines(existing); err != nil {
+			r.Errors = append(r.Errors, fmt.Errorf("routines.json write: %w", err))
+			return
+		}
+		r.RoutinesAdded += added
+	}
 }
 
 func mergeTasks(b []byte, r *ImportReport) {

@@ -35,8 +35,10 @@ func TestMigrateLegacyDataIndependentlyAndPreservesSources(t *testing.T) {
 
 	tasks := []Task{{ID: "t1", Title: "legacy"}}
 	notes := []Note{{ID: "n1", Body: "legacy note"}}
+	routines := []Routine{sampleRoutine()}
 	taskBytes := writeJSON(t, filepath.Join(mustGetwd(t), "data", "tasks.json"), tasks)
 	writeJSON(t, filepath.Join(mustGetwd(t), "data", "notes.json"), notes)
+	routineBytes := writeJSON(t, filepath.Join(mustGetwd(t), "data", "routines.json"), routines)
 	writeJSON(t, filepath.Join(mustGetwd(t), "data", "settings.json"), Settings{Theme: "Nord"})
 	// Keep a second directory around to make sure migration is tied to cwd.
 	writeJSON(t, filepath.Join(legacy, "tasks.json"), []Task{{ID: "wrong"}})
@@ -50,6 +52,12 @@ func TestMigrateLegacyDataIndependentlyAndPreservesSources(t *testing.T) {
 	}
 	if got, err := LoadNotes(); err != nil || !reflect.DeepEqual(got, notes) {
 		t.Fatalf("migrated notes = %#v, %v", got, err)
+	}
+	if got, err := LoadRoutines(); err != nil || !reflect.DeepEqual(got, routines) {
+		t.Fatalf("migrated routines = %#v, %v", got, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(mustGetwd(t), "data", "routines.json")); err != nil || !reflect.DeepEqual(got, routineBytes) {
+		t.Fatalf("legacy routine source changed: %v", err)
 	}
 	if got, err := LoadSettings(); err != nil || got.Theme != "Nord" {
 		t.Fatalf("migrated settings = %#v, %v", got, err)
@@ -74,6 +82,7 @@ func TestMigrateLegacyDestinationWinsAndMalformedFileDoesNotBlockOthers(t *testi
 		t.Fatal(err)
 	}
 	writeJSON(t, filepath.Join(dataDir, "tasks.json"), []Task{{ID: "legacy"}})
+	writeJSON(t, filepath.Join(dataDir, "routines.json"), []Routine{sampleRoutine()})
 	writeJSON(t, filepath.Join(dataDir, "settings.json"), Settings{Theme: "Ember"})
 	if err := os.WriteFile(filepath.Join(dataDir, "notes.json"), []byte("{"), 0o644); err != nil {
 		t.Fatal(err)
@@ -82,6 +91,11 @@ func TestMigrateLegacyDestinationWinsAndMalformedFileDoesNotBlockOthers(t *testi
 		t.Fatal(err)
 	}
 	if err := Save([]Task{{ID: "existing"}}); err != nil {
+		t.Fatal(err)
+	}
+	old := sampleRoutine()
+	old.Title = "existing"
+	if err := SaveRoutines([]Routine{old}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -96,6 +110,9 @@ func TestMigrateLegacyDestinationWinsAndMalformedFileDoesNotBlockOthers(t *testi
 	if got, err := LoadSettings(); err != nil || got.Theme != "Ember" {
 		t.Fatalf("independent settings migration failed: %#v, %v", got, err)
 	}
+	if got, err := LoadRoutines(); err != nil || len(got) != 1 || got[0].Title != "existing" {
+		t.Fatalf("routine destination precedence failed: %#v, %v", got, err)
+	}
 }
 
 func TestMigrateLegacyRejectsWrongSchemaWithoutBlockingOthers(t *testing.T) {
@@ -106,17 +123,21 @@ func TestMigrateLegacyRejectsWrongSchemaWithoutBlockingOthers(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeJSON(t, filepath.Join(dataDir, "tasks.json"), []string{"not a task"})
+	writeJSON(t, filepath.Join(dataDir, "routines.json"), []Routine{{ID: "invalid", Schedule: ScheduleCustom}})
 	writeJSON(t, filepath.Join(dataDir, "notes.json"), []Note{{ID: "valid-note"}})
 
 	report := MigrateLegacyData()
-	if len(report.Errors) != 1 || !strings.Contains(report.Errors[0].Error(), "tasks.json") {
-		t.Fatalf("errors = %v, want only invalid task schema", report.Errors)
+	if len(report.Errors) != 2 || !strings.Contains(report.WarningText(), "tasks.json") || !strings.Contains(report.WarningText(), "routines.json") {
+		t.Fatalf("errors = %v, want invalid task and routine schemas", report.Errors)
 	}
 	if got, err := Load(); err != nil || len(got) != 0 {
 		t.Fatalf("invalid tasks must not migrate: %#v, %v", got, err)
 	}
 	if got, err := LoadNotes(); err != nil || len(got) != 1 || got[0].ID != "valid-note" {
 		t.Fatalf("valid notes should migrate independently: %#v, %v", got, err)
+	}
+	if got, err := LoadRoutines(); err != nil || len(got) != 0 {
+		t.Fatalf("invalid routines must not migrate: %#v, %v", got, err)
 	}
 }
 
@@ -131,6 +152,13 @@ func TestImportDataMergesStableIDsAndIsIdempotent(t *testing.T) {
 	if err := SaveNotes(notes); err != nil {
 		t.Fatal(err)
 	}
+	r := sampleRoutine()
+	r.ID = "existing-routine"
+	other := r
+	other.ID = "conflict-routine"
+	if err := SaveRoutines([]Routine{r, other}); err != nil {
+		t.Fatal(err)
+	}
 	source := t.TempDir()
 	writeJSON(t, filepath.Join(source, "tasks.json"), []Task{
 		{ID: "same", Title: "existing"}, {ID: "same", Title: "conflict"}, {ID: "new", Title: "new"}, {ID: "added", Title: "added"},
@@ -138,6 +166,11 @@ func TestImportDataMergesStableIDsAndIsIdempotent(t *testing.T) {
 	writeJSON(t, filepath.Join(source, "notes.json"), []Note{
 		{ID: "same-note", Body: "old", CreatedAt: now}, {ID: "added-note", Body: "added", CreatedAt: now},
 	})
+	conflict := other
+	conflict.Title = "different"
+	added := r
+	added.ID = "added-routine"
+	writeJSON(t, filepath.Join(source, "routines.json"), []Routine{r, conflict, added, added})
 	writeJSON(t, filepath.Join(source, "settings.json"), Settings{Theme: "Nord"})
 
 	report, err := ImportData(source)
@@ -150,16 +183,25 @@ func TestImportDataMergesStableIDsAndIsIdempotent(t *testing.T) {
 	if report.NotesAdded != 1 || report.NotesDuplicate != 1 || report.NotesConflict != 0 || report.SettingsResult != "imported" {
 		t.Fatalf("note/settings counts = %+v", report)
 	}
+	if report.RoutinesAdded != 1 || report.RoutinesDuplicate != 2 || report.RoutinesConflict != 1 {
+		t.Fatalf("routine counts = %+v", report)
+	}
+	if got, err := LoadRoutines(); err != nil || len(got) != 3 || got[1].Title != other.Title {
+		t.Fatalf("merged routines = %+v %v", got, err)
+	}
 	if got, _ := Load(); len(got) != 3 || got[0].Title != "existing" {
 		t.Fatalf("merged tasks = %#v", got)
 	}
 
 	report, err = ImportData(source)
-	if err != nil || len(report.Errors) != 0 || report.TasksAdded != 0 || report.NotesAdded != 0 {
+	if err != nil || len(report.Errors) != 0 || report.TasksAdded != 0 || report.NotesAdded != 0 || report.RoutinesAdded != 0 {
 		t.Fatalf("repeat import not idempotent: %+v, %v", report, err)
 	}
 	if report.TasksDuplicate != 3 || report.TasksConflict != 1 || report.NotesDuplicate != 2 || report.SettingsResult != "skipped (destination exists)" {
 		t.Fatalf("repeat counts = %+v", report)
+	}
+	if report.RoutinesDuplicate != 3 || report.RoutinesConflict != 1 {
+		t.Fatalf("repeat routine counts = %+v", report)
 	}
 }
 
@@ -170,8 +212,9 @@ func TestImportDataReportsMalformedAndNoRecognizedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeJSON(t, filepath.Join(bad, "notes.json"), []Note{{ID: "n"}})
+	writeJSON(t, filepath.Join(bad, "routines.json"), []string{"bad"})
 	report, err := ImportData(bad)
-	if err != nil || len(report.Errors) != 1 || report.NotesAdded != 1 {
+	if err != nil || len(report.Errors) != 2 || report.NotesAdded != 1 {
 		t.Fatalf("independent malformed import = %+v, %v", report, err)
 	}
 	if _, err := ImportData(t.TempDir()); err == nil {

@@ -35,6 +35,10 @@ func ExportData(dir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("load notes: %w", err)
 	}
+	routines, err := LoadRoutines()
+	if err != nil {
+		return "", fmt.Errorf("load routines: %w", err)
+	}
 	settings, err := LoadSettings()
 	if err != nil {
 		return "", fmt.Errorf("load settings: %w", err)
@@ -59,6 +63,7 @@ func ExportData(dir string) (string, error) {
 	}{
 		{name: "tasks.json", value: tasks},
 		{name: "notes.json", value: notes},
+		{name: "routines.json", value: routines},
 		{name: "settings.json", value: settings},
 	} {
 		data, err := json.MarshalIndent(file.value, "", "  ")

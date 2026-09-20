@@ -57,8 +57,8 @@ func registerFlags(fs *flag.FlagSet) (mock, simple, version *bool, importDir, ex
 	mock = fs.Bool("mock", false, "run with generated sample data instead of loading/saving real data")
 	simple = fs.Bool("simple", false, "run a single-pane view: greeting beside one combined list of tasks, overdue items and notes")
 	version = fs.Bool("version", false, "print the version and exit")
-	importDir = fs.String("import-data", "", "merge tasks.json, notes.json, and settings.json from DIRECTORY into Taskii's data")
-	exportDir = fs.String("export", "", "write tasks.json, notes.json, and settings.json to DIRECTORY/taski_data")
+	importDir = fs.String("import-data", "", "merge tasks.json, notes.json, routines.json, and settings.json from DIRECTORY into Taskii's data")
+	exportDir = fs.String("export", "", "write tasks.json, notes.json, routines.json, and settings.json to DIRECTORY/taski_data")
 	return
 }
 
@@ -82,6 +82,7 @@ func setUsage(fs *flag.FlagSet) {
 func printImportReport(r model.ImportReport) {
 	fmt.Printf("tasks: added=%d duplicate=%d conflict=%d\n", r.TasksAdded, r.TasksDuplicate, r.TasksConflict)
 	fmt.Printf("notes: added=%d duplicate=%d conflict=%d\n", r.NotesAdded, r.NotesDuplicate, r.NotesConflict)
+	fmt.Printf("routines: added=%d duplicate=%d conflict=%d\n", r.RoutinesAdded, r.RoutinesDuplicate, r.RoutinesConflict)
 	if r.SettingsResult == "" {
 		r.SettingsResult = "not provided"
 	}

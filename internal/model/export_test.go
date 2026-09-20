@@ -14,11 +14,15 @@ func TestExportDataCreatesPortableSnapshot(t *testing.T) {
 	now := time.Date(2026, time.September, 20, 10, 30, 0, 0, time.UTC)
 	tasks := []Task{{ID: "task-1", Title: "Export me", CreatedAt: now}}
 	notes := []Note{{ID: "note-1", Body: "Keep me", CreatedAt: now}}
+	routines := []Routine{{ID: "routine-1", Title: "Walk", CreatedAt: now, Schedule: ScheduleEveryDay, History: map[string]RoutineStatus{"2026-09-19": RoutineCompleted}}}
 	settings := Settings{Theme: "Nord", Layout: "stacked"}
 	if err := Save(tasks); err != nil {
 		t.Fatal(err)
 	}
 	if err := SaveNotes(notes); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveRoutines(routines); err != nil {
 		t.Fatal(err)
 	}
 	if err := SaveSettings(settings); err != nil {
@@ -44,6 +48,11 @@ func TestExportDataCreatesPortableSnapshot(t *testing.T) {
 	if !reflect.DeepEqual(gotNotes, notes) {
 		t.Fatalf("exported notes = %#v, want %#v", gotNotes, notes)
 	}
+	var gotRoutines []Routine
+	readExportJSON(t, filepath.Join(path, "routines.json"), &gotRoutines)
+	if !reflect.DeepEqual(gotRoutines, routines) {
+		t.Fatalf("exported routines = %#v, want %#v", gotRoutines, routines)
+	}
 	var gotSettings Settings
 	readExportJSON(t, filepath.Join(path, "settings.json"), &gotSettings)
 	if !reflect.DeepEqual(gotSettings, settings) {
@@ -58,10 +67,13 @@ func TestExportDataIncludesEmptyFilesAndDoesNotOverwrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"tasks.json", "notes.json", "settings.json"} {
+	for _, name := range []string{"tasks.json", "notes.json", "routines.json", "settings.json"} {
 		if _, err := os.Stat(filepath.Join(path, name)); err != nil {
 			t.Fatalf("missing %s: %v", name, err)
 		}
+	}
+	if b, err := os.ReadFile(filepath.Join(path, "routines.json")); err != nil || string(b) != "[]" {
+		t.Fatalf("empty routines export = %s %v", b, err)
 	}
 	marker := filepath.Join(path, "marker")
 	if err := os.WriteFile(marker, []byte("keep"), 0o644); err != nil {
