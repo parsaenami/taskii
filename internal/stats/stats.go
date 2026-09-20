@@ -4,7 +4,7 @@ import (
 	"sort"
 	"time"
 
-	"taskii/internal/model"
+	"github.com/parsaenami/taskii/internal/model"
 )
 
 // dateFormat is an alias for the model package's canonical layout.

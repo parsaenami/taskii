@@ -836,3 +836,10 @@ Added `taskii --export /path/to/export-directory`. It creates a portable
 The export is assembled in a temporary sibling directory and renamed into
 place only after all files are written. An existing `taski_data/` directory is
 never overwritten.
+
+## Full module path build fix (2026-09-20)
+
+Updated the Go module path, package imports, and release workflow linker target
+to `github.com/parsaenami/taskii`, enabling `go install` and crediting
+Raina-Hardik's upstream fix in commit
+`c982e17d6e70bed7f1057c86aeb4310752d18033`.

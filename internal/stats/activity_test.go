@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"taskii/internal/model"
+	"github.com/parsaenami/taskii/internal/model"
 )
 
 func day(s string) time.Time {

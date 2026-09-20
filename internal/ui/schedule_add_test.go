@@ -8,7 +8,7 @@ import (
 	"github.com/adrg/xdg"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"taskii/internal/model"
+	"github.com/parsaenami/taskii/internal/model"
 )
 
 func TestScheduledInputCreatesAndSelectsTask(t *testing.T) {

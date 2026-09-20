@@ -7,8 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"taskii/internal/model"
-	"taskii/internal/ui"
+	"github.com/parsaenami/taskii/internal/model"
+	"github.com/parsaenami/taskii/internal/ui"
 )
 
 func main() {

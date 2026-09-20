@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"taskii/internal/stats"
+	"github.com/parsaenami/taskii/internal/stats"
 )
 
 // reportChart selects which chart the Reports pane shows.

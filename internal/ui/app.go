@@ -12,8 +12,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"taskii/internal/model"
-	"taskii/internal/stats"
+	"github.com/parsaenami/taskii/internal/model"
+	"github.com/parsaenami/taskii/internal/stats"
 )
 
 type focusedPane int

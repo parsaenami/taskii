@@ -3,7 +3,7 @@ package ui
 import (
 	"sort"
 
-	"taskii/internal/model"
+	"github.com/parsaenami/taskii/internal/model"
 )
 
 // upcomingTasks projects future dates without moving or rewriting stored tasks.

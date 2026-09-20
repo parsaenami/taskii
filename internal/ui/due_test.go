@@ -11,7 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
-	"taskii/internal/model"
+	"github.com/parsaenami/taskii/internal/model"
 )
 
 func TestParseDueField(t *testing.T) {

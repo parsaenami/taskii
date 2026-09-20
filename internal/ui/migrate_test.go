@@ -8,8 +8,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"taskii/internal/model"
-	"taskii/internal/stats"
+	"github.com/parsaenami/taskii/internal/model"
+	"github.com/parsaenami/taskii/internal/stats"
 )
 
 func testNow() time.Time { return time.Date(2026, 9, 13, 10, 0, 0, 0, time.UTC) }

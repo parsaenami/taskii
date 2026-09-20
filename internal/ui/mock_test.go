@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"taskii/internal/stats"
+	"github.com/parsaenami/taskii/internal/stats"
 )
 
 // TestMockCoversEveryAnnotation guards --mock as the app's living demo: it
