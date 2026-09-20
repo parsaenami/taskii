@@ -104,6 +104,7 @@ existing `taski_data` directory.
 | `T` / `shift+t` | open interactive theme browser (340+ themes, fuzzy search & live preview) |
 | `L` | cycle layout |
 | `S` | open settings |
+| `?` | open the categorized shortcuts reference |
 | `q` / `ctrl+c` | quit |
 
 On the Reports pane, `←/→` (or `h/l`) switch between the Week, Month, and Contribution charts instead of moving a selection.

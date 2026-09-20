@@ -826,26 +826,43 @@ func (a App) renderSettingsTheme(width int) []string {
 	return lines
 }
 
-// renderSettingsAbout shows the TASKII wordmark and the build version,
-// vertically centred in the content pane. The banner falls back to plain
-// text on a pane too narrow for the block letters, same as the greeting.
+// renderSettingsAbout shows the TASKII wordmark, project metadata, and the
+// local-storage privacy note, vertically centred in the content pane. The
+// banner falls back to plain text on a pane too narrow for the block letters,
+// same as the greeting.
 func (a App) renderSettingsAbout(width int) []string {
 	blank := lipgloss.NewStyle().Background(colorPaneBg)
 	logoStyle := lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Background(colorPaneBg)
+	creatorStyle := lipgloss.NewStyle().Foreground(colorText).Background(colorPaneBg)
+	repoStyle := lipgloss.NewStyle().Foreground(colorAccent).Background(colorPaneBg)
+	privacyStyle := lipgloss.NewStyle().Foreground(colorMuted).Background(colorPaneBg)
+
+	// Fit plain text before applying ANSI styling. This keeps narrow About
+	// panes safe without asking lipgloss to re-wrap already-styled content.
+	centered := func(text string, style lipgloss.Style) string {
+		if width > 0 && lipgloss.Width(text) > width {
+			text = fitToWidth(text, width)
+		}
+		return centerLineWidth(style.Render(text), width)
+	}
 
 	var art []string
 	if lipgloss.Width(taskiiBanner[0]) <= width {
 		for _, row := range taskiiBanner {
-			art = append(art, centerLineWidth(logoStyle.Render(row), width))
+			art = append(art, centered(row, logoStyle))
 		}
 	} else {
-		art = []string{centerLineWidth(logoStyle.Render("TASKII"), width)}
+		art = []string{centered("TASKII", logoStyle)}
 	}
 
-	version := centerLineWidth(statLabelStyle.Background(colorPaneBg).Render("v"+Version), width)
+	version := centered("v"+Version, statLabelStyle.Background(colorPaneBg))
+	creator := centered("Created by Parsa Enami", creatorStyle)
+	repository := centered("https://github.com/parsaenami/taskii", repoStyle)
+	privacy := centered("Local JSON storage; no cloud or account", privacyStyle)
 
-	// Centre the block vertically: banner rows + a blank + the version line.
-	block := len(art) + 2
+	// Centre the block vertically: banner, version, creator, repository, and
+	// privacy lines with one spacer after the wordmark.
+	block := len(art) + 5
 	top := (settingsContentLines - block) / 2
 	if top < 0 {
 		top = 0
@@ -857,7 +874,7 @@ func (a App) renderSettingsAbout(width int) []string {
 	}
 	lines = append(lines, art...)
 	lines = append(lines, blank.Render(strings.Repeat(" ", width)))
-	lines = append(lines, version)
+	lines = append(lines, version, creator, repository, privacy)
 	return lines
 }
 

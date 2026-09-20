@@ -843,3 +843,13 @@ Updated the Go module path, package imports, and release workflow linker target
 to `github.com/parsaenami/taskii`, enabling `go install` and crediting
 Raina-Hardik's upstream fix in commit
 `c982e17d6e70bed7f1057c86aeb4310752d18033`.
+
+## About, shortcuts modal, and CLI help (2026-09-20)
+
+Expanded Settings > About with the creator, GitHub repository, and a concise
+local-data privacy statement. Added a global `?` overlay that preserves the
+current interaction, groups bindings by pane/environment, scrolls when needed,
+and closes with `?`, Esc, or `q`; `ctrl+c` retains its quit behavior. The CLI's
+custom `--help` output now explicitly documents and demonstrates both
+`--import-data` and `--export`. Added focused regression tests for the About
+metadata, shortcuts behavior and geometry, and CLI help content.

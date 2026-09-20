@@ -12,12 +12,9 @@ import (
 )
 
 func main() {
-	mock := flag.Bool("mock", false, "run with generated sample data instead of loading/saving real data")
-	simple := flag.Bool("simple", false, "run a single-pane view: greeting beside one combined list of tasks, overdue items and notes")
-	version := flag.Bool("version", false, "print the version and exit")
-	importDir := flag.String("import-data", "", "merge legacy data from a directory containing tasks.json, notes.json, or settings.json")
-	exportDir := flag.String("export", "", "export tasks, notes, and settings into DIRECTORY/taski_data")
-	flag.Parse()
+	setUsage(flag.CommandLine)
+	mock, simple, version, importDir, exportDir := registerFlags(flag.CommandLine)
+	flag.CommandLine.Parse(os.Args[1:])
 
 	if *version {
 		fmt.Println("taskii " + ui.Version)
@@ -53,6 +50,32 @@ func main() {
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
+	}
+}
+
+func registerFlags(fs *flag.FlagSet) (mock, simple, version *bool, importDir, exportDir *string) {
+	mock = fs.Bool("mock", false, "run with generated sample data instead of loading/saving real data")
+	simple = fs.Bool("simple", false, "run a single-pane view: greeting beside one combined list of tasks, overdue items and notes")
+	version = fs.Bool("version", false, "print the version and exit")
+	importDir = fs.String("import-data", "", "merge tasks.json, notes.json, and settings.json from DIRECTORY into Taskii's data")
+	exportDir = fs.String("export", "", "write tasks.json, notes.json, and settings.json to DIRECTORY/taski_data")
+	return
+}
+
+func setUsage(fs *flag.FlagSet) {
+	fs.Usage = func() {
+		out := fs.Output()
+		fmt.Fprintln(out, "Usage: taskii [options]")
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "Taskii is a terminal task manager.")
+		fmt.Fprintln(out, "Import and export commands run without launching the dashboard.")
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "Options:")
+		fs.PrintDefaults()
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "Examples:")
+		fmt.Fprintln(out, "  taskii --import-data /path/to/data")
+		fmt.Fprintln(out, "  taskii --export /path/to/backup")
 	}
 }
 

@@ -51,6 +51,12 @@ type App struct {
 	focus focusedPane
 	mode  mode
 
+	// shortcutsOpen is a transient overlay. It deliberately does not change
+	// mode, so opening help from an editor, confirmation, or Settings preserves
+	// the underlying interaction exactly as it was.
+	shortcutsOpen   bool
+	shortcutsScroll int
+
 	upcoming      bool // the Today pane is currently showing future tasks
 	todaySelected int
 	todayScroll   int
@@ -214,6 +220,16 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, pomodoroTick()
 
 	case tea.KeyMsg:
+		// '?' is app-global and is reserved before any mode-specific handler
+		// sees it, including text editors where it would otherwise be inserted.
+		if a.shortcutsOpen {
+			return a.updateShortcuts(msg)
+		}
+		if msg.String() == "?" {
+			a.shortcutsOpen = true
+			a.shortcutsScroll = 0
+			return a, nil
+		}
 		switch a.mode {
 		case modeAdding:
 			return a.updateAdding(msg)
@@ -1946,7 +1962,10 @@ func (a App) View() string {
 
 	page := a.renderPage()
 	if a.mode == modeSettings {
-		return overlayModal(page, a.renderSettingsModal(), a.width, a.height)
+		page = overlayModal(page, a.renderSettingsModal(), a.width, a.height)
+	}
+	if a.shortcutsOpen {
+		return overlayModal(page, a.renderShortcutsModal(), a.width, a.height)
 	}
 	return page
 }
