@@ -1044,3 +1044,11 @@ both normal and simple modes; tests cover rejected skips and persisted state.
 Rejected attempts now also set the app's error line to explain that a completed
 routine must be marked undone before it can be skipped. The message therefore
 appears in the standard danger-colored status area at the bottom of the app.
+
+## README keybinding refresh (2026-09-21)
+
+Updated the README keybinding table to match the current contextual handlers.
+Removed the obsolete top-level `t`, `T`, and `L` bindings: theme browsing and
+layout selection now live in Settings (`S`). Clarified the differing Today,
+Overdue, Notes, routine, Reports, simple-mode, and Pomodoro actions, and updated
+the Themes and Layouts feature descriptions to point to Settings.

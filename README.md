@@ -91,29 +91,27 @@ previous workday definition, while changing week start never rewrites history.
 
 ## Keybindings
 
+Bindings are contextual: actions that do not apply to the focused pane are
+inactive. Press `?` at any time for the complete in-app shortcuts reference.
+
 | Key | Action |
 | --- | --- |
-| `↑/k`, `↓/j` | move selection |
-| `tab` / `shift+tab` | switch focused pane |
-| `a` | add task / note |
-| `space` / `enter` | complete/uncomplete a selected Today routine; task space toggles done, task enter edits; note enter edits |
-| `R` | open routine manager (including in simple mode) |
-| `s` | skip selected Today routine; restore a skipped routine in the manager |
-| `d` | delete (asks to confirm) |
-| `i` | toggle important |
-| `I` | filter: important only |
-| `U` | filter: undone only |
-| `e` | expand/collapse the notes board |
-| `C` | switch Today / Upcoming (current list / Upcoming in simple mode); clears all notes instead when the Notes pane is focused (asks to confirm) |
-| `p` | start/pause Pomodoro |
-| `r` | reset Pomodoro phase |
-| `n` | skip Pomodoro phase |
-| `t` | cycle next curated color theme |
-| `T` / `shift+t` | open interactive theme browser (340+ themes, fuzzy search & live preview) |
-| `L` | cycle layout |
-| `S` | open settings |
-| `?` | open the categorized shortcuts reference |
-| `q` / `ctrl+c` | quit |
+| `↑/↓` or `j/k` | Move or scroll the current selection |
+| `tab` / `shift+tab` | Switch focused pane in normal mode; `tab` switches Task/Note input in `--simple` mode |
+| `a` | Add a task from Today, or add a note from Notes |
+| `space` | Toggle a Today task/routine; move an Overdue task to Today |
+| `enter` | Edit a selected task/note; toggle a selected Today routine |
+| `s` | Skip a selected Today routine; restore a skipped routine in the manager |
+| `d` | Delete the selected task or note after confirmation |
+| `i` | Toggle important on the selected task |
+| `I` / `U` | Toggle the important-only / undone-only task filters |
+| `C` | Switch Today/Upcoming; clear Notes when Notes is focused (with confirmation) |
+| `e` | Expand/shrink Notes; edit a routine in the routine manager |
+| `R` | Open the routine manager, including in `--simple` mode |
+| `p` / `r` / `n` | Pause/resume, reset, or skip the Pomodoro phase |
+| `S` | Open Settings for themes, layouts, Pomodoro, and calendar preferences |
+| `?` | Open/close the categorized shortcuts reference |
+| `q` / `ctrl+c` | Quit |
 
 On the Reports pane, `←/→` (or `h/l`) switch between the **7 Days**,
 **Month**, **Contribution**, and **Routines** charts. On Routines, `↑/↓`
@@ -190,8 +188,8 @@ The saved JSON format is unchanged: the scheduled day is stored in `Task.Date`.
 - **Notes** — a simple multi-line notes board, expandable to full screen.
 - **Pomodoro timer** — start, pause, reset, and skip work/break phases.
 - **Reports** — task completion with 7-day/monthly bars and a contribution heatmap, plus a configurable-week routine matrix and follow-through summary.
-- **Themes** — 7 curated core themes cycled with `t`, 340+ terminal themes accessible via interactive fuzzy-search browser (`T` / `shift+t`), and extensible custom JSON/JSONL theme support.
-- **Layouts** — multiple pane arrangements, cycled with `L`.
+- **Themes** — 7 curated core themes, 340+ searchable terminal themes, and extensible custom JSON/JSONL theme support, all available from Settings (`S`).
+- **Layouts** — multiple pane arrangements selected and previewed from Settings (`S`).
 
 ## Custom Themes
 
