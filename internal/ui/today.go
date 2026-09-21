@@ -15,12 +15,12 @@ const todayTabsHeight = 1
 // renderTodayTabs keeps the day selector visible next to the list it controls.
 // It is intentionally separate from renderSimpleTabs: simple mode has its own
 // task/note input tabs and should not inherit this view switcher.
-func renderTodayTabs(upcoming bool, width int) string {
+func renderTodayTabs(timeline, upcoming bool, width int) string {
 	activeStyle := lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Background(colorPaneBg)
 	inactiveStyle := lipgloss.NewStyle().Foreground(colorMuted).Background(colorPaneBg)
 	separator := lipgloss.NewStyle().Foreground(colorBorder).Background(colorPaneBg)
 
-	activeToday := !upcoming
+	activeToday := !timeline && !upcoming
 	tab := func(label string, active bool) string {
 		marker := " "
 		style := inactiveStyle
@@ -30,7 +30,19 @@ func renderTodayTabs(upcoming bool, width int) string {
 		}
 		return style.Render(marker + " " + label + " ")
 	}
-	line := tab("Today", activeToday) + separator.Render("│") + tab("Upcoming", upcoming)
+	line := tab("Today", activeToday) + separator.Render("│") + tab("Timeline", timeline) + separator.Render("│") + tab("Upcoming", upcoming)
+	// Keep all three names visible in narrow task columns. Color still marks
+	// the active view; only the decorative marker/padding yields.
+	if width > 0 && lipgloss.Width(line) > width && width >= lipgloss.Width("Today│Timeline│Upcoming") {
+		compactTab := func(label string, active bool) string {
+			style := inactiveStyle
+			if active {
+				style = activeStyle
+			}
+			return style.Render(label)
+		}
+		line = compactTab("Today", activeToday) + separator.Render("│") + compactTab("Timeline", timeline) + separator.Render("│") + compactTab("Upcoming", upcoming)
+	}
 	if width > 0 && lipgloss.Width(line) < width {
 		line += lipgloss.NewStyle().Background(colorPaneBg).Render(strings.Repeat(" ", width-lipgloss.Width(line)))
 	}

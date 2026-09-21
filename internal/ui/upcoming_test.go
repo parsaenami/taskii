@@ -78,7 +78,7 @@ func TestUpcomingActionsTargetVisibleTasks(t *testing.T) {
 				{ID: "today", Date: "2026-09-03"},
 				{ID: "future", Date: "2026-09-04"},
 			}
-			a = upcomingKey(a, "C")
+			a.setUpcoming(true)
 			a = upcomingKey(a, "i")
 			if a.tasks[0].Important || !a.tasks[1].Important {
 				t.Fatal("importance action targeted an invisible task")
@@ -105,7 +105,7 @@ func TestUpcomingActionsTargetVisibleTasks(t *testing.T) {
 	}
 }
 
-func TestUpcomingKeyPreservesNotesClearAndSimpleTabs(t *testing.T) {
+func TestNotesClearAndSimpleUpcomingTabs(t *testing.T) {
 	a := upcomingTestApp()
 	a.focus = focusNotes
 	a.notes = []model.Note{{Body: "keep me"}}
@@ -117,7 +117,7 @@ func TestUpcomingKeyPreservesNotesClearAndSimpleTabs(t *testing.T) {
 	a.simple, a.simpleNoteMode = true, true
 	a.notes = []model.Note{{Body: "note"}}
 	a.tasks = []model.Task{{ID: "today", Date: "2026-09-03"}, {ID: "future", Date: "2026-09-04"}}
-	a = upcomingKey(a, "C")
+	a.setUpcoming(true)
 	if !a.upcoming || a.simpleNoteMode || len(a.simpleEntries()) != 1 || a.simpleEntries()[0].isNote {
 		t.Fatal("simple Upcoming should expose only future tasks and task input")
 	}
@@ -126,29 +126,30 @@ func TestUpcomingKeyPreservesNotesClearAndSimpleTabs(t *testing.T) {
 		t.Fatal("tab should return to the combined list before choosing note input")
 	}
 	a = upcomingKey(a, "C")
-	a = upcomingKey(a, "C")
 	if a.upcoming || len(a.simpleEntries()) != 2 {
-		t.Fatal("C should restore the combined list")
+		t.Fatal("C should not change the simple-mode task view")
 	}
 }
 
-func TestUpcomingKeyOnlySwitchesTasksPane(t *testing.T) {
-	for _, focus := range []focusedPane{focusOverdue, focusReports} {
+func TestCDoesNotSwitchTaskViews(t *testing.T) {
+	for _, focus := range []focusedPane{focusToday, focusOverdue, focusReports} {
 		a := upcomingTestApp()
 		a.focus = focus
 		a = upcomingKey(a, "C")
 		if a.upcoming {
 			t.Fatalf("C switched Today/Upcoming from pane %d", focus)
 		}
-		if strings.Contains(ansiRe.ReplaceAllString(renderHelpBar(a.helpGroups(), a.width), ""), "Today/Upcoming") {
-			t.Fatalf("pane %d advertises the task-view shortcut", focus)
+		help := ansiRe.ReplaceAllString(renderHelpBar(a.helpGroups(), a.width), "")
+		if strings.Contains(help, "[C]") || strings.Contains(help, "Today/Upcoming") {
+			t.Fatalf("pane %d advertises the removed task-view shortcut", focus)
 		}
 	}
 
 	a := upcomingTestApp()
+	a.simple = true
 	a = upcomingKey(a, "C")
-	if !a.upcoming {
-		t.Fatal("C did not switch views from the Tasks pane")
+	if a.upcoming {
+		t.Fatal("C switched views in simple mode")
 	}
 }
 
@@ -163,7 +164,7 @@ func TestUpcomingMidnightRolloverAndPendingDelete(t *testing.T) {
 				{ID: "due", Date: "2026-09-04"},
 				{ID: "future", Date: "2026-09-05"},
 			}
-			a = upcomingKey(a, "C")
+			a.setUpcoming(true)
 			a = upcomingKey(a, "d")
 			now = now.AddDate(0, 0, 1)
 			updated, _ := a.Update(pomodoroTickMsg(now))
@@ -213,7 +214,7 @@ func TestUpcomingDateRenderingAndDimensions(t *testing.T) {
 					a.simple, a.layout = simple, lay
 					a.width, a.height = size[0], size[1]
 					a.tasks = []model.Task{task}
-					a = upcomingKey(a, "C")
+					a.setUpcoming(true)
 					page := a.View()
 					if !strings.Contains(page, "Upcoming") || !strings.Contains(page, "2026-09-04") {
 						t.Fatal("Upcoming title or scheduled date missing")

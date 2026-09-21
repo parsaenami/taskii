@@ -105,14 +105,15 @@ inactive. Press `?` at any time for the complete in-app shortcuts reference.
 | --- | --- |
 | `↑/↓` or `j/k` | Move or scroll the current selection |
 | `tab` / `shift+tab` | Switch focused pane in normal mode; `tab` switches Task/Note input in `--simple` mode |
-| `a` | Add a task from Today, or add a note from Notes |
+| `a` | Add a task from the Today pane, or add a note from Notes |
 | `space` | Toggle a Today task/routine; move an Overdue task to Today |
 | `enter` | Edit a selected task/note; toggle a selected Today routine |
 | `s` | Skip a selected Today routine; restore a skipped routine in the manager |
 | `d` | Delete the selected task or note after confirmation |
 | `i` | Toggle important on the selected task |
 | `I` / `U` | Toggle the important-only / undone-only task filters |
-| `C` | Switch Today/Upcoming; clear Notes when Notes is focused (with confirmation) |
+| `C` | Clear Notes when Notes is focused (with confirmation) |
+| `←/→` or `h/l` | Switch Today/Timeline/Upcoming while the Today pane is focused; switch charts in Reports |
 | `e` | Expand/shrink Notes; edit a routine in the routine manager |
 | `R` | Open the routine manager, including in `--simple` mode |
 | `p` / `r` / `n` | Pause/resume, reset, or skip the Pomodoro phase |
@@ -120,7 +121,9 @@ inactive. Press `?` at any time for the complete in-app shortcuts reference.
 | `?` | Open/close the categorized shortcuts reference |
 | `q` / `ctrl+c` | Quit |
 
-On the Reports pane, `←/→` (or `h/l`) switch between the **7 Days**,
+On the Today pane, `←/→` (or `h/l`) move between **Today**, **Timeline**,
+and **Upcoming**. On the Reports
+pane, the same keys switch between the **7 Days**,
 **Month**, **Contribution**, and **Routines** charts. On Routines, `↑/↓`
 (or `j/k`) scroll the per-routine rows while the weekday columns stay fixed.
 
@@ -176,10 +179,10 @@ the task title and stored as an absolute date, so it counts down naturally.
 Deadline tasks remain in Today until completed and show a right-aligned phrase
 such as `today`, `tomorrow`, `in 5 days`, `yesterday`, or `5 days ago`.
 
-`Shift+C` opens **Upcoming**, sorted by date and then appointment time, with
+Use `←/→` or `h/l` in the Today pane to open **Upcoming**, sorted by date and then appointment time, with
 untimed tasks after appointments on the same day. Each row shows its full date.
 Press it again to return to Today (or the current combined list in `--simple`).
-On the Notes pane, `Shift+C` retains its existing clear-board action.
+On the Notes pane, `C` retains its clear-board action.
 Adding a task switches to the view containing its date.
 
 Scheduled tasks automatically appear in Today on their date. Unfinished tasks
@@ -187,11 +190,18 @@ from earlier dates appear in Overdue using the existing behavior. These lists
 refresh while the app is running; no restart or rescheduling is needed.
 The saved JSON format is unchanged: the scheduled day is stored in `Task.Date`.
 
+**Timeline** shows only valid timed appointments scheduled for the local current
+date. Its adaptive rail keeps the current time and the day's event range in
+view, distinguishes point appointments from time ranges, and falls back to a
+compact scrollable agenda when space is constrained. Completed appointments
+stay visible but dimmed; Today routines and deadline-only projections are not
+included.
+
 ## Features
 
-- **Today / Overdue** — add tasks or timed appointments, set deadlines with a trailing `!Nd`, toggle done, mark important, delete.
+- **Today / Timeline / Overdue** — manage tasks and timed appointments, view today's schedule on an adaptive live rail, set deadlines with a trailing `!Nd`, toggle done, mark important, and delete.
 - **Routines** — recurring every-day, workday, or custom-weekday activities with daily completion, skip, and missed history.
-- **Upcoming** — schedule tasks with a trailing `MM-DD`, optionally followed by `HH:MM`, and browse future dates with `Shift+C`.
+- **Upcoming** — schedule tasks with a trailing `MM-DD`, optionally followed by `HH:MM`, and browse future dates through the Today-pane tabs.
 - **Notes** — a simple multi-line notes board, expandable to full screen.
 - **Pomodoro timer** — start, pause, reset, and skip work/break phases.
 - **Reports** — task completion with 7-day/monthly bars and a contribution heatmap, plus a configurable-week routine matrix and follow-through summary.

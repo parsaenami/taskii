@@ -39,6 +39,9 @@ func (a App) activeDayTasks() []model.Task {
 	if a.upcoming {
 		return a.upcomingTasks()
 	}
+	if a.timeline {
+		return a.timelineTasks()
+	}
 	return a.todayTasks()
 }
 
@@ -46,25 +49,15 @@ func (a App) activeDayTitle() string {
 	if a.upcoming {
 		return "Upcoming"
 	}
-	return "Today"
-}
-
-func (a App) upcomingSwitchLabel() string {
-	if a.upcoming {
-		if a.simple {
-			return "current"
-		}
-		return "today"
+	if a.timeline {
+		return "Timeline"
 	}
-	return "upcoming"
-}
-
-func (a *App) toggleUpcoming() {
-	a.setUpcoming(!a.upcoming)
+	return "Today"
 }
 
 func (a *App) setUpcoming(upcoming bool) {
 	a.upcoming = upcoming
+	a.timeline = false
 	a.todaySelected, a.todayScroll = 0, 0
 	a.simpleSelected, a.simpleScroll = 0, 0
 	if a.simple && upcoming {
@@ -78,8 +71,49 @@ func (a *App) setUpcoming(upcoming bool) {
 	a.clampSelections()
 }
 
+func (a *App) setTimeline(timeline bool) {
+	if a.simple {
+		return
+	}
+	a.timeline = timeline
+	a.upcoming = false
+	a.todaySelected, a.todayScroll = 0, 0
+	a.focus = focusToday
+	a.clampSelections()
+}
+
+// moveDayView navigates the visible Today-pane tabs.
+func (a *App) moveDayView(delta int) {
+	view := 0
+	if a.timeline {
+		view = 1
+	} else if a.upcoming {
+		view = 2
+	}
+	view = max(0, min(2, view+delta))
+	switch view {
+	case 1:
+		a.setTimeline(true)
+	case 2:
+		a.setUpcoming(true)
+	default:
+		a.setUpcoming(false)
+	}
+}
+
 // showTaskDate selects the view that contains an added task. The caller then
 // selects its ID, because both daily and future lists have their own ordering.
 func (a *App) showTaskDate(date string) {
 	a.setUpcoming(date > a.now().Format(dateFormat))
+}
+
+// showTask keeps a newly added/edited appointment on Timeline when that is
+// already the active view and it still belongs there. All other additions use
+// the established date-based Today/Upcoming switching behavior.
+func (a *App) showTask(task model.Task) {
+	if !a.simple && a.timeline && isTimelineTask(task, a.now()) {
+		a.setTimeline(true)
+		return
+	}
+	a.showTaskDate(task.Date)
 }

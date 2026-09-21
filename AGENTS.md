@@ -1097,3 +1097,53 @@ the user's request. About now contains only the wordmark, version, creator, and
 repository; its vertical-centering budget was reduced by one line, and the
 regression test now asserts the removed sentence stays absent. Full
 `scripts/verify.sh` validation remains clean.
+## Adaptive Timeline view (2026-09-21)
+
+Added Timeline as the middle tab of the existing Today pane: **Today | Timeline
+| Upcoming**. Left/right or h/l moves among those tabs while Today is focused;
+Reports keeps its chart navigation. Simple mode is unchanged.
+
+Timeline projects only valid timed appointments whose stored date is the local
+current date, applies the existing important/undone filters, excludes routines
+and deadline-only Today projections, and reuses task identity/actions for
+navigation, completion, editing, deletion, and importance. Adding or editing a
+same-day timed appointment while already on Timeline keeps that view and selects
+the appointment; entries that no longer belong use the existing date-based view
+switching.
+
+The new fixed-budget renderer derives a padded window around now and the shown
+events, maps them onto a muted vertical rail, gives point and ranged appointments
+distinct markers, and draws an exact accent-colored NOW line. Same-start events
+receive independent rows. When height or width cannot fit the scaled rail it
+uses a scrollable agenda with NOW pinned; the empty state retains the live marker
+and a clear message. Every segment and padding cell carries `colorPaneBg`, and
+pre-styled ANSI is never re-wrapped. Rail labels are placed only on whole hours;
+intermediate proportional rows keep an unlabelled rail rather than presenting
+misleading interpolated times such as 08:34. Compact scroll hints omit empty
+directions rather than displaying noise such as `↑0`. Rail-only rows reserve
+the same two-cell selection gutter as event rows, keeping the vertical axis
+aligned through both selected and unselected appointment markers.
+
+Focused tests cover date/type/filter membership, sorting, three-tab navigation,
+Reports/simple isolation, identity-safe actions and adds,
+point/range/NOW/important/completed rendering, same-start events, empty and
+constrained geometry, per-cell background coverage, all normal layouts, and
+tick-driven current-time refresh. README and the shortcuts overlay document the
+new view and navigation.
+
+## Remove Today/Upcoming C shortcut (2026-09-21)
+
+Removed `C` as a Today/Upcoming switch in both normal and simple modes. The
+visible Today-pane tabs use left/right or h/l as their sole navigation, avoiding
+two bindings for the same view change. `C` remains contextual to Notes, where it
+still opens the confirmed clear-board action. Context help, the shortcuts modal,
+README, and regression tests were updated to remove the stale task-view binding.
+
+## Timeline input-row reservation (2026-09-21)
+
+Timeline now permanently reserves its bottom content row for the inline task
+editor. In normal mode that row is pane-background filler; pressing `a` fills
+the existing row instead of reducing the rail height and remapping every time
+and event by one terminal line. Timeline scroll capacity uses the same reserved
+budget in both modes. A regression test pins viewport size plus the rendered NOW
+and event rows before and after opening the input.

@@ -77,6 +77,7 @@ type App struct {
 	shortcutsScroll int
 
 	upcoming      bool // the Today pane is currently showing future tasks
+	timeline      bool // the Today pane is showing today's timed appointments
 	todaySelected int
 	todayScroll   int
 
@@ -391,10 +392,6 @@ func (a App) updateSimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.openRoutineManager()
 		return a, nil
 
-	case "C":
-		a.toggleUpcoming()
-		return a, nil
-
 	case "I":
 		if a.focus == focusReports {
 			return a, nil
@@ -413,7 +410,7 @@ func (a App) updateSimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "tab":
 		if a.upcoming {
-			a.toggleUpcoming()
+			a.setUpcoming(false)
 		}
 		a.simpleNoteMode = !a.simpleNoteMode
 		return a, nil
@@ -630,6 +627,10 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			a.routineReportScroll = 0
 			return a, nil
 		}
+		if a.focus == focusToday {
+			a.moveDayView(-1)
+			return a, nil
+		}
 		a.moveSelection(-1)
 		return a, nil
 
@@ -637,6 +638,10 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if a.focus == focusReports {
 			a.reportChart = a.reportChart.next()
 			a.routineReportScroll = 0
+			return a, nil
+		}
+		if a.focus == focusToday {
+			a.moveDayView(1)
 			return a, nil
 		}
 		a.moveSelection(1)
@@ -746,15 +751,11 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case "C":
-		switch a.focus {
-		case focusNotes:
-			// Clear the whole board. Capitalised and confirmed, since it
-			// discards everything at once.
-			if len(a.notes) > 0 {
-				a.mode = modeConfirmClearNotes
-			}
-		case focusToday:
-			a.toggleUpcoming()
+		// Notes-only: clear the whole board. Capitalised and confirmed, since
+		// it discards everything at once. Today-pane views use their visible
+		// tabs with left/right or h/l instead of a second shortcut.
+		if a.focus == focusNotes && len(a.notes) > 0 {
+			a.mode = modeConfirmClearNotes
 		}
 		return a, nil
 
@@ -1222,7 +1223,7 @@ func (a *App) applyTaskEdit(raw string) bool {
 			a.tasks[i].Kind = p.kind
 			a.err = ""
 			a.persist()
-			a.showTaskDate(p.date)
+			a.showTask(a.tasks[i])
 			a.selectTaskByID(a.taskEditID)
 			return true
 		}
@@ -1440,7 +1441,7 @@ func (a *App) addTask(raw string) bool {
 	a.err = ""
 	a.tasks = append(a.tasks, t)
 	a.persist()
-	a.showTaskDate(t.Date)
+	a.showTask(t)
 	a.selectTaskByID(t.ID)
 	a.status = "Added for " + t.Date
 	return true
@@ -2141,7 +2142,7 @@ func (a App) helpGroups() []helpGroup {
 		} else {
 			keys = append(keys, helpKey{"space", "toggle"}, helpKey{"enter", "edit"}, helpKey{"d", "delete"}, helpKey{"i", "important"})
 		}
-		keys = append(keys, helpKey{"C", a.upcomingSwitchLabel()}, helpKey{"I/U", "filters"}, helpKey{"↑/↓ j/k", "navigate"}, helpKey{"R", "routines"}, helpKey{"S", "settings"}, helpKey{"q", "quit"})
+		keys = append(keys, helpKey{"I/U", "filters"}, helpKey{"↑/↓ j/k", "navigate"}, helpKey{"R", "routines"}, helpKey{"S", "settings"}, helpKey{"q", "quit"})
 		return []helpGroup{{"", keys}}
 	}
 
@@ -2236,7 +2237,7 @@ func (a App) helpGroups() []helpGroup {
 
 	viewKeys := []helpKey{{"tab", "switch pane"}, {"↑/↓ j/k", "navigate"}}
 	if a.focus == focusToday {
-		viewKeys = append(viewKeys, helpKey{"C", "switch Today/Upcoming"})
+		viewKeys = append(viewKeys, helpKey{"←/→ h/l", "switch view"})
 	}
 	viewKeys = append(viewKeys, helpKey{"I/U", "filters"})
 
@@ -2291,7 +2292,7 @@ func (a App) visibleRowsFor(focus focusedPane) int {
 		// The normal Today pane has a fixed view-selector row above its list.
 		// Reserve it so switching views does not change the task viewport.
 		contentHeight -= todayTabsHeight
-		if !a.upcoming && len(a.dueRoutines()) > 0 {
+		if !a.upcoming && !a.timeline && len(a.dueRoutines()) > 0 {
 			contentHeight -= 2
 		}
 	}
@@ -2301,8 +2302,12 @@ func (a App) visibleRowsFor(focus focusedPane) int {
 	// otherwise the pane grows by a line whenever "N more" starts appearing.
 	indicatorLines := 1
 	rows := contentHeight - indicatorLines
-	if focus == focusToday && a.mode == modeAdding {
-		rows-- // reserve a line for the inline add-task input
+	if focus == focusToday && (a.mode == modeAdding || a.timeline) {
+		// Timeline permanently reserves its bottom row for the inline editor,
+		// so opening it fills existing space instead of shrinking/remapping the
+		// rail by one row. The regular Today/Upcoming lists reserve it only while
+		// the editor is actually open.
+		rows--
 	}
 	if focus == focusNotes && a.mode == modeNoteEditing {
 		// The note editor is multi-line, so reserve its full height.
@@ -2377,8 +2382,18 @@ func (a App) renderPage() string {
 
 			today := a.activeDayTasks()
 			todayVisible := a.visibleRowsFor(focusToday)
-			todayBody := a.renderTodayList(todayVisible, leftWidth-4)
-			todayBody = renderTodayTabs(a.upcoming, leftWidth-4) + "\n" + todayBody
+			contentWidth := leftWidth - 4
+			var todayBody string
+			if a.timeline {
+				// One bottom row is always left for the inline task editor. When
+				// closed, renderPane fills it with the pane background; when opened,
+				// the input occupies it without changing the rail's height.
+				timelineHeight := todayHeight - 2 - todayTabsHeight - 1
+				todayBody = renderTimeline(today, a.todaySelected, a.todayScroll, a.focus == focusToday, contentWidth, timelineHeight, a.now())
+			} else {
+				todayBody = a.renderTodayList(todayVisible, contentWidth)
+			}
+			todayBody = renderTodayTabs(a.timeline, a.upcoming, contentWidth) + "\n" + todayBody
 			if a.mode == modeAdding {
 				a.input.TextStyle = lipgloss.NewStyle().Foreground(colorText).Background(colorPaneBg)
 				a.input.PlaceholderStyle = lipgloss.NewStyle().Foreground(colorMuted).Background(colorPaneBg)
@@ -2401,7 +2416,7 @@ func (a App) renderPage() string {
 				todayBody += "\n" + inputLine
 			}
 			title := fmt.Sprintf("%s (%d)%s", a.activeDayTitle(), len(today), filters)
-			if !a.upcoming {
+			if !a.upcoming && !a.timeline {
 				title = fmt.Sprintf("Today (%d tasks · %d routines)%s", len(today), len(a.dueRoutines()), filters)
 			}
 			todayPane := renderPane(title, todayBody, a.focus == focusToday, leftWidth, todayHeight)

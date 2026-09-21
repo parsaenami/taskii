@@ -37,9 +37,9 @@ var shortcutSections = []shortcutSection{
 		},
 	},
 	{
-		name: "Tasks / Today / Upcoming",
+		name: "Tasks / Today / Timeline / Upcoming",
 		items: []shortcutItem{
-			{"a", "add a task (Today)"},
+			{"a", "add a task (Today pane)"},
 			{"enter", "edit the selected task"},
 			{"space", "mark done / undone"},
 			{"space / enter", "toggle today's routine"},
@@ -48,7 +48,7 @@ var shortcutSections = []shortcutSection{
 			{"i", "toggle important"},
 			{"I", "show important only"},
 			{"U", "show undone only"},
-			{"C", "switch Today and Upcoming"},
+			{"left/right, h/l", "switch Today-pane view"},
 			{"up/down, j/k", "move through tasks"},
 		},
 	},
@@ -100,7 +100,6 @@ var shortcutSections = []shortcutSection{
 			{"d", "delete after confirmation"},
 			{"i", "toggle important on a task"},
 			{"I / U", "important / undone filter"},
-			{"C", "switch Today and Upcoming"},
 			{"up/down, j/k", "move through entries"},
 		},
 	},

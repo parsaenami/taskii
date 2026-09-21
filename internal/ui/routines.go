@@ -16,7 +16,7 @@ type todayEntry struct {
 }
 
 func (a App) dueRoutines() []model.Routine {
-	if a.upcoming {
+	if a.upcoming || a.timeline {
 		return nil
 	}
 	now := a.now()
