@@ -55,8 +55,8 @@ taskii
 Data is stored automatically in the standard XDG locations, independent of the
 current working directory:
 
-- Tasks and notes: `$XDG_DATA_HOME/taskii/tasks.json` and
-  `$XDG_DATA_HOME/taskii/notes.json`
+- Tasks, notes, and routines: `$XDG_DATA_HOME/taskii/tasks.json`,
+  `$XDG_DATA_HOME/taskii/notes.json`, and `$XDG_DATA_HOME/taskii/routines.json`
 - Settings: `$XDG_CONFIG_HOME/taskii/settings.json`
 
 When the XDG environment variables are unset, the platform defaults are used
@@ -70,18 +70,24 @@ Flags:
 ```bash
 taskii --mock     # launch with generated sample data instead of your real data
 taskii --simple   # single-pane view: greeting + one combined list of tasks, overdue items, and notes
-taskii --import-data /path/to/data  # merge tasks, notes, and settings
+taskii --import-data /path/to/data  # merge tasks, notes, routines, and settings
 taskii --export /path/to/export-directory  # create taski_data/ with all saved data
 ```
 
 The import command processes each recognized JSON file independently. Source-
-only task and note IDs are added; identical IDs are duplicates, and conflicting
+only task, note, and routine IDs are added; identical IDs are duplicates, and conflicting
 IDs are skipped in favor of existing XDG records. Settings import only when no
 XDG settings file exists. Errors are reported and the command exits nonzero.
 
 The export command creates `/path/to/export-directory/taski_data/` containing
-`tasks.json`, `notes.json`, and `settings.json`. It does not overwrite an
+`tasks.json`, `notes.json`, `routines.json`, and `settings.json`. It does not overwrite an
 existing `taski_data` directory.
+
+Settings > Calendar controls which weekdays count as workdays for workday
+routines and which day begins calendar-week reports. Defaults are Monday-Friday
+workdays and a Monday week start. Calendar edits are applied only when Settings
+is saved; changing workdays first settles outstanding routine days against the
+previous workday definition, while changing week start never rewrites history.
 
 ## Keybindings
 
@@ -90,7 +96,9 @@ existing `taski_data` directory.
 | `↑/k`, `↓/j` | move selection |
 | `tab` / `shift+tab` | switch focused pane |
 | `a` | add task / note |
-| `space` / `enter` | toggle done (tasks) or open note |
+| `space` / `enter` | complete/uncomplete a selected Today routine; task space toggles done, task enter edits; note enter edits |
+| `R` | open routine manager (including in simple mode) |
+| `s` | skip selected Today routine; restore a skipped routine in the manager |
 | `d` | delete (asks to confirm) |
 | `i` | toggle important |
 | `I` | filter: important only |
@@ -107,7 +115,35 @@ existing `taski_data` directory.
 | `?` | open the categorized shortcuts reference |
 | `q` / `ctrl+c` | quit |
 
-On the Reports pane, `←/→` (or `h/l`) switch between the Week, Month, and Contribution charts instead of moving a selection.
+On the Reports pane, `←/→` (or `h/l`) switch between the **7 Days**,
+**Month**, **Contribution**, and **Routines** charts. On Routines, `↑/↓`
+(or `j/k`) scroll the per-routine rows while the weekday columns stay fixed.
+
+## Routines
+
+Press `R` to open the routine manager. `a` creates a routine, `enter` or `e`
+edits the selected one, and `d` deletes its definition **and history** after
+confirmation. The manager shows today's state, including skipped routines;
+select a skipped routine and press `s` to restore it for today. `esc` closes it.
+
+In the editor, type a title, use `tab`/`↑`/`↓` to move between fields, and
+`←`/`→` to choose **every day**, **workdays**, or **custom**. For a custom
+schedule, select days with `space` in your configured week-start order. Press
+`ctrl+s` to save or `esc` to cancel. A title and at least one custom day are
+required. Workdays and the week start are configured in Settings > Calendar.
+
+Today's scheduled routines appear above tasks (and above the combined list in
+`--simple`). Select one and press `space` or `enter` to toggle its completion,
+or `s` to skip it for today. Skipped routines disappear until restored from the
+manager; completed ones remain visible. Routines never enter Overdue or
+Upcoming and are unaffected by task filters. Past scheduled days with no
+decision become missed on launch or after midnight. Editing a schedule settles
+previous days using the old schedule before applying the new one to today and
+future dates. Mock mode demonstrates all three schedule types without saving.
+
+The Reports pane's **Routines** chart uses the configured calendar week. It
+shows weekly done/skipped/missed totals, follow-through (completed divided by
+completed plus missed), and a seven-day status row for every routine.
 
 ## Scheduled tasks
 
@@ -149,10 +185,11 @@ The saved JSON format is unchanged: the scheduled day is stored in `Task.Date`.
 ## Features
 
 - **Today / Overdue** — add tasks or timed appointments, set deadlines with a trailing `!Nd`, toggle done, mark important, delete.
+- **Routines** — recurring every-day, workday, or custom-weekday activities with daily completion, skip, and missed history.
 - **Upcoming** — schedule tasks with a trailing `MM-DD`, optionally followed by `HH:MM`, and browse future dates with `Shift+C`.
 - **Notes** — a simple multi-line notes board, expandable to full screen.
 - **Pomodoro timer** — start, pause, reset, and skip work/break phases.
-- **Reports** — completion progress, a 7-day/monthly bar chart, and a contribution heatmap.
+- **Reports** — task completion with 7-day/monthly bars and a contribution heatmap, plus a configurable-week routine matrix and follow-through summary.
 - **Themes** — 7 curated core themes cycled with `t`, 340+ terminal themes accessible via interactive fuzzy-search browser (`T` / `shift+t`), and extensible custom JSON/JSONL theme support.
 - **Layouts** — multiple pane arrangements, cycled with `L`.
 

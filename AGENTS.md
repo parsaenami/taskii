@@ -853,3 +853,194 @@ and closes with `?`, Esc, or `q`; `ctrl+c` retains its quit behavior. The CLI's
 custom `--help` output now explicitly documents and demonstrates both
 `--import-data` and `--export`. Added focused regression tests for the About
 metadata, shortcuts behavior and geometry, and CLI help content.
+
+## Routines model, calendar preferences, and weekly stats (2026-09-21)
+
+Added `internal/model/routine.go`: routines have stable IDs, titles, creation
+timestamps, every-day/workday/custom-weekday recurrence, dated
+completed/skipped/missed history, and a last-evaluated date. `routines.json`
+loads/saves under XDG data using the existing atomic writer. Validation rejects
+malformed schedules, weekdays, dates, statuses, and duplicate persisted IDs.
+`ScheduledOnDate` and `ReconcileRoutine` accept an explicit workday set, so
+callers can settle outstanding days under the old preference before switching
+to a new one. Reconciliation marks unresolved scheduled dates through yesterday
+missed, preserves recorded decisions, and advances across non-scheduled dates;
+today's pending state is derived and never persisted.
+
+Settings now persist optional `workdays` and `week_start` (Go weekday numbers,
+Sunday=0), with accessors returning Mon–Fri and Monday for old settings.
+`WeekStart` is a pointer so explicit Sunday survives JSON round-trips.
+`internal/stats/routines.go` computes a separate configurable calendar-week
+report per routine with seven dated cells and aggregate counts; follow-through
+uses completed / (completed + missed), excluding skips and pending days. Task
+report calculations were not changed. Legacy migration, explicit import and
+portable export include routines; imports count ID duplicates/conflicts like
+tasks and notes, and empty exports write `[]`. Model/stats tests cover XDG
+persistence, validation, calendar defaults, reconciliation across DST/month
+boundaries, report boundaries, and migration/import/export behavior.
+
+Integration note: the existing UI's `saveSettings()` constructs a new settings
+literal, so UI integration must include both calendar fields when saving any
+setting (or the calendar preference is lost). Similarly, the CLI import summary
+must include `ImportReport.RoutinesAdded/Duplicate/Conflict` to display routine
+counts. Those UI/CLI files are outside the scope of this model/stats change.
+
+## Calendar settings UI and routine-aware integration (2026-09-21)
+
+Integrated the calendar preferences into App state and Settings without adding
+routine-management panes yet. Normal startup loads effective workdays/week
+start plus `routines.json`, reconciles outstanding routine dates against the
+loaded workday definition, persists any reconciliation, and reports settings,
+notes, routine-load, reconciliation, or save failures through the existing
+non-fatal startup error line. A failed routine load blocks workday changes (but
+not week-start-only changes) so routines present on disk can never be skipped
+during old-calendar reconciliation. Mock mode uses Monday-Friday/Monday
+defaults, an empty routine set, and remains non-persistent. `saveSettings()`
+now always writes the complete preference set, including calendar and Pomodoro
+values.
+
+Settings now has a fixed-geometry **Calendar** section. It renders weekdays in
+the chosen week-start order, permits any week start, toggles workdays while
+refusing to remove the final one, and keeps all edits in the modal scratch copy.
+Esc discards calendar changes; Enter or Ctrl+S commits. Before a changed
+workday set replaces the live one, every routine is reconciled using the OLD
+set so past history cannot be reclassified by the new preference. A week-start
+change only updates the report boundary and never rewrites history. Calendar
+commit persistence writes reconciled routines before settings and keeps the
+modal open with an error if either operation fails.
+
+The CLI import summary and help now include routine add/duplicate/conflict
+counts and `routines.json`; README persistence/import/export documentation now
+lists routines and succinctly explains Calendar defaults and semantics. Added
+tests for default/loaded/mock state, complete-settings preservation, scratch
+cancel and last-workday validation, old-workday reconciliation and persistence,
+routine import-summary output, and Calendar modal geometry/background styling.
+`gofmt` and focused tests (`go test ./internal/ui ./internal/model
+./internal/stats .`) pass. Final validation also passes `go test ./...`,
+`go vet ./...`, `gofmt -l .`, and `git diff --check`.
+
+## Routine manager and daily UI (2026-09-21)
+
+Added a `R` routine-manager overlay (normal and simple modes), with scrolling,
+add/edit, today's status, restore skipped days, and identity-checked confirmed
+deletion of a definition and its history. The editor uses a scratch title and
+schedule, with custom weekdays in configured week-start order; `ctrl+s` validates
+and atomically saves the replacement snapshot before updating live state. An
+edited routine is reconciled under its old schedule/workdays through yesterday
+before the new schedule takes effect. The existing tick checks for date changes,
+reconciles once per new date (retrying failed saves), and clamps list selection;
+normal ticks do not write routine data.
+
+Today projects routine and task entries separately, with ROUTINES/TASKS
+headings when routines are due. Routine rows precede tasks; selection indexes
+entries while scrolling accounts for non-selectable headings. Space/enter
+toggles today's completed state and `s` skips it, leaving completed routines
+visible and skipped ones accessible from the manager. Task-only operations are
+inert on routine rows; filters affect tasks only; Upcoming has no routines.
+Simple mode places routines in their own section before the creation-sorted
+task/note entries, using the page background, and retains TASK/NOTE add tabs.
+Mock mode includes every-day coffee, workday inbox, and custom Sentry examples.
+Shortcuts, contextual help, and README routine usage were updated. UI tests
+cover manager CRUD, validation, skip restoration, confirmation identity,
+schedule-edit reconciliation, Today/simple projection and action isolation,
+rollover, mock data, and modal dimensions. The separate Reports routine chart
+remains for the next pass.
+
+## Reports routine chart (2026-09-21)
+
+Completed the routine reporting pass. The task chart formerly labelled
+**Week** is now user-facing **7 Days**, retaining its rolling seven-day task
+semantics. Reports now cycles through 7 Days, Month, Contribution, and
+Routines, with compact `7 M C R` tabs in narrow panes.
+
+The Routines chart is computed directly from the app's routines, current time,
+configured week start, and workday set via `stats.ComputeRoutineWeek`; task and
+routine reports remain separate inputs to the renderer. It shows this week's
+done/skipped/missed totals, a follow-through gradient (completed divided by
+completed plus missed, or an em dash with no denominator), configured-order
+weekday/date headers, and a seven-day matrix per routine. Status symbols are
+completed `●`, skipped `–`, missed `×`, pending `○`, and not-due/future `·`,
+with a fitted legend, title truncation before fixed status columns, an empty
+state, and a clear resize fallback.
+
+Reports navigation is now directional: left/right or h/l switches charts;
+up/down or j/k scrolls routine rows only on the Routines chart. The scroll is
+clamped on resize/data changes and reset on chart or calendar-boundary changes.
+Routine rows viewport within the existing fixed pane geometry; the minimum
+Reports budget accommodates the taller summary without increasing the full
+height or reducing Contribution visibility. Context help, the shortcuts
+overlay, and README were updated. Tests cover chart cycling/labels, aggregate
+and zero-denominator summaries, all five symbols, Monday/Sunday/custom week
+starts, truncation and narrow fallbacks, scrolling/reset and mutation
+isolation, and frame dimensions across all curated themes, layouts, and
+representative terminal sizes. Final validation passes `go test ./...`,
+`go vet ./...`, `go build ./...`, `gofmt -l .`, and `git diff --check`.
+
+## Routine integration review (2026-09-21)
+
+Fixed a report-history edge case: calendar/schedule edits reconcile old dates
+before changing the recurrence, but the weekly report was re-evaluating all
+historical dates against the new recurrence, hiding recorded completions and
+inventing misses. Settled dates (through `LastEvaluatedDate`) now use recorded
+history as the source of truth; pending/unsettled dates still derive from the
+current recurrence. Added regression cases for both schedule and workday
+changes.
+
+Simple mode now draws an explicit ROUTINES heading before its due routine
+entries, and Today retains its TASKS heading even when no tasks are visible.
+Manager selection/scroll use the same reserved viewport budget, and
+the routine editor passes left/right arrows to its title input when that field
+is focused. On date rollover both normal and simple list selections reset
+alongside their scroll offsets so an old index cannot silently target a new
+item. Today list scrolling now accounts for headings only when present;
+without routines its selected task remains inside the physical viewport.
+Routine ID generation retries against every existing ID when the clock-based
+base ID collides. Added targeted regression tests for each of these cases.
+
+## Calendar settings arrow navigation (2026-09-21)
+
+Calendar values in the Settings modal are now edited only with Space, not the
+left/right arrow keys. Left (and its `h` navigation alias) returns focus to the
+Settings section menu, while Right no longer mutates the selected value. The
+Calendar footer reflects the new controls, and a regression test verifies that
+both arrows preserve the scratch calendar values and that Left navigates back.
+
+## Settings modal width (2026-09-21)
+
+Increased the fixed Settings modal width from 64 to 70 columns so the complete
+Calendar key-hint footer, including `[esc] close`, fits without truncation while
+retaining the existing labels and Ctrl+S save action.
+
+## Routine follow-through row (2026-09-21)
+
+Moved the Reports routine chart's `Follow-through` label onto the same line as
+its progress bar, immediately before it with a one-cell gap. The routine report
+height budget and constrained-height fallback were reduced by the freed row,
+and a regression test pins the new label/bar arrangement.
+
+## Routine chart day spacing (2026-09-21)
+
+Expanded each weekday/status column in the Reports routine matrix from two to
+three cells, adding a visible one-cell gutter between adjacent days. Weekday
+and date headers use the same column width as the status symbols so the chart
+remains aligned; a regression assertion covers the spaced weekday header.
+
+## Routine modal key-hint footer (2026-09-21)
+
+Restyled the Routine manager/editor bindings to match the app-wide help
+pattern: bracketed keys use the accent color and bold weight, labels are muted,
+and entries use the same visual separator treatment. Both manager and editor
+hints are now pinned to the bottom of the modal, independent of list length or
+editor content. Confirmation mode continues to leave binding guidance to its
+single page-level prompt. Added a regression test for styling and placement.
+
+## Completed routine skip guard (2026-09-21)
+
+The skip action now refuses to replace today's completed routine status. A
+completed routine must first be toggled back to pending before it can be
+skipped. The guard lives in the shared routine mutation path, so it applies in
+both normal and simple modes; tests cover rejected skips and persisted state.
+
+Rejected attempts now also set the app's error line to explain that a completed
+routine must be marked undone before it can be skipped. The message therefore
+appears in the standard danger-colored status area at the bottom of the app.
