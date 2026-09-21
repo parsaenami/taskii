@@ -17,7 +17,7 @@ func main() {
 	flag.CommandLine.Parse(os.Args[1:])
 
 	if *version {
-		fmt.Println("taskii " + ui.Version)
+		fmt.Println("taskii " + ui.CurrentVersion())
 		return
 	}
 	if *importDir != "" {

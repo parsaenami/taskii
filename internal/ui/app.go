@@ -15,6 +15,7 @@ import (
 
 	"github.com/parsaenami/taskii/internal/model"
 	"github.com/parsaenami/taskii/internal/stats"
+	"github.com/parsaenami/taskii/internal/updatecheck"
 )
 
 type focusedPane int
@@ -125,6 +126,11 @@ type App struct {
 	layout   layout
 
 	settings settingsModal
+
+	checkForUpdates bool
+	updateChecker   updatecheck.Checker
+	updateResult    updatecheck.Result
+	updateChecked   bool
 }
 
 // Options configures NewApp for non-default startup modes.
@@ -207,6 +213,7 @@ func NewApp(opts Options) App {
 
 	workdays := settings.EffectiveWorkdays()
 	weekStart := settings.EffectiveWeekStart()
+	checkForUpdates := settings.EffectiveCheckForUpdates() && !opts.Mock
 	var routines []model.Routine
 	var routinesLoadErr error
 	if !opts.Mock {
@@ -267,11 +274,32 @@ func NewApp(opts Options) App {
 		noPersist:       opts.Mock,
 		username:        currentUsername(),
 		layout:          lay,
+		checkForUpdates: checkForUpdates,
+		updateChecker:   updatecheck.New(),
 	}
 }
 
 func (a App) Init() tea.Cmd {
+	if a.shouldCheckForUpdates() {
+		return tea.Batch(pomodoroTick(), checkForUpdatesCmd(a.updateChecker, CurrentVersion()))
+	}
 	return pomodoroTick()
+}
+
+type updateCheckMsg struct {
+	result updatecheck.Result
+	err    error
+}
+
+func checkForUpdatesCmd(checker updatecheck.Checker, current string) tea.Cmd {
+	return func() tea.Msg {
+		result, err := checker.Check(current)
+		return updateCheckMsg{result: result, err: err}
+	}
+}
+
+func (a App) shouldCheckForUpdates() bool {
+	return a.checkForUpdates && !a.noPersist && CurrentVersion() != "dev"
 }
 
 func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -290,6 +318,19 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, tea.Batch(pomodoroTick(), notifyPhaseChange(a.pomo.phase))
 		}
 		return a, pomodoroTick()
+
+	case updateCheckMsg:
+		// Release checks are advisory. Offline, malformed, and rate-limited
+		// responses never become application errors or interrupt the dashboard.
+		if msg.err != nil {
+			return a, nil
+		}
+		a.updateResult = msg.result
+		a.updateChecked = true
+		if msg.result.Available && a.err == "" {
+			a.status = fmt.Sprintf("Update available: v%s → v%s · %s", msg.result.Current, msg.result.Latest, msg.result.URL)
+		}
+		return a, nil
 
 	case tea.KeyMsg:
 		// '?' is app-global and is reserved before any mode-specific handler
@@ -1698,11 +1739,13 @@ func (a *App) saveSettings() error {
 		return nil
 	}
 	weekStart := a.weekStart
+	checkForUpdates := a.checkForUpdates
 	err := model.SaveSettings(model.Settings{
 		Theme:                     currentTheme().Name,
 		Layout:                    a.layout.String(),
 		Workdays:                  append([]time.Weekday(nil), a.workdays...),
 		WeekStart:                 &weekStart,
+		CheckForUpdates:           &checkForUpdates,
 		PomodoroFocusMinutes:      a.pomo.workMinutes,
 		PomodoroShortBreakMinutes: a.pomo.shortBreakMinutes,
 		PomodoroLongBreakMinutes:  a.pomo.longBreakMinutes,

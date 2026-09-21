@@ -469,7 +469,7 @@ func renderSimpleGreeting(now time.Time, username string, width int) string {
 	lines = append(lines,
 		blank.Render(""),
 		label.Render(now.Format("Monday, January 2, 2006")),
-		label.Render("v"+Version),
+		label.Render("v"+CurrentVersion()),
 		blank.Render(""),
 		label.Render(greetLine),
 	)

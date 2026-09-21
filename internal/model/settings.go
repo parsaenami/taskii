@@ -11,6 +11,9 @@ import (
 type Settings struct {
 	Theme  string `json:"theme,omitempty"`
 	Layout string `json:"layout,omitempty"`
+	// Nil preserves the default for settings written before update checks were
+	// introduced. A pointer distinguishes an explicit false from omission.
+	CheckForUpdates *bool `json:"checkForUpdates,omitempty"`
 	// Nil means the legacy default. A pointer distinguishes Sunday (0) from
 	// an omitted week start; an empty non-nil workday set is invalid.
 	Workdays  []time.Weekday `json:"workdays,omitempty"`
@@ -40,6 +43,12 @@ func (s Settings) EffectiveWeekStart() time.Weekday {
 		return time.Monday
 	}
 	return *s.WeekStart
+}
+
+// EffectiveCheckForUpdates keeps automatic checks enabled by default while
+// still allowing users to explicitly opt out.
+func (s Settings) EffectiveCheckForUpdates() bool {
+	return s.CheckForUpdates == nil || *s.CheckForUpdates
 }
 
 func (s Settings) ValidateCalendar() error {

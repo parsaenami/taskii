@@ -1052,3 +1052,48 @@ Removed the obsolete top-level `t`, `T`, and `L` bindings: theme browsing and
 layout selection now live in Settings (`S`). Clarified the differing Today,
 Overdue, Notes, routine, Reports, simple-mode, and Pomodoro actions, and updated
 the Themes and Layouts feature descriptions to point to Settings.
+
+## Release update checks (2026-09-21)
+
+Started an isolated implementation on `feat/update-check`. Added an
+`internal/updatecheck` package that queries GitHub's latest stable release with
+a four-second timeout, compares semantic versions (including prereleases), and
+caches successful responses under the XDG cache home for 24 hours. Fresh cache
+entries avoid network traffic; stale valid entries remain a silent offline
+fallback. Cache writes use a same-directory temporary file and rename. Tests
+cover version ordering, request headers, fresh-cache reuse, stale offline
+fallback, and malformed versions/responses. UI/settings integration remains.
+
+Integrated update checks into startup and Settings. Existing settings default
+to enabled via a pointer-backed `checkForUpdates` field, preserving an explicit
+opt-out; mock runs and development builds never check. `App.Init` batches the
+check with the Pomodoro tick, update failures are ignored, and successful newer
+results produce a status-line suggestion with current/latest versions and the
+release URL. Settings gained an Updates section with the toggle, last result,
+and upgrade guidance; enabling it triggers an immediate check after saving.
+Every whole-settings save now preserves the preference. Version display and
+checks also fall back to Go build metadata so `go install ...@latest` builds
+work even without release-workflow linker flags. About now discloses the
+optional GitHub release request. Tests and final validation remain.
+
+Added model/UI regression coverage for default-on and explicit opt-out
+semantics, mock/development-build suppression, injected-version normalization,
+silent failures, upgrade notices, modal scratch/save behavior, complete-setting
+persistence, Updates content, and fixed modal geometry. UI tests now isolate
+`XDG_CACHE_HOME` alongside data/config homes. README documents the startup
+request, 24-hour cache, non-blocking failure behavior, status suggestion, and
+Settings opt-out. Focused package tests pass; full validation remains.
+
+Final validation passes `scripts/verify.sh` (`go build ./...`, `go vet ./...`,
+`gofmt`, and `go test ./...`) plus `git diff --check`. A release-style build
+with linker-injected version `9.8.7` reports that version through `--version`.
+A 100x30 tmux check of `--mock` confirmed the new Updates section fits the
+fixed Settings geometry, renders the disabled mock state, cache policy, upgrade
+command, release URL, and complete footer without overflow. The feature is
+complete on the isolated `feat/update-check` worktree.
+
+Removed the local-data/update-check privacy sentence from Settings > About at
+the user's request. About now contains only the wordmark, version, creator, and
+repository; its vertical-centering budget was reduced by one line, and the
+regression test now asserts the removed sentence stays absent. Full
+`scripts/verify.sh` validation remains clean.

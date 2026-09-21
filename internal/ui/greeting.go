@@ -3,6 +3,7 @@ package ui
 import (
 	"os"
 	"os/user"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -28,6 +29,21 @@ var greetingContentLines = len(taskiiBanner) + 3
 // It's overwritten at build time via -ldflags "-X github.com/parsaenami/taskii/internal/ui.Version=...";
 // "dev" is what you get from a plain `go build`/`go run`.
 var Version = "dev"
+
+// CurrentVersion returns the linker-injected release version when available.
+// `go install module@version` does not use Taskii's release linker flags, but
+// Go records the module version in build metadata, so use that as a fallback.
+func CurrentVersion() string {
+	if Version != "" && Version != "dev" {
+		return strings.TrimPrefix(Version, "v")
+	}
+	if info, ok := debug.ReadBuildInfo(); ok {
+		if v := info.Main.Version; v != "" && v != "(devel)" {
+			return strings.TrimPrefix(v, "v")
+		}
+	}
+	return "dev"
+}
 
 // currentUsername resolves the OS user for the greeting pane. user.Current()
 // can fail in some sandboxed/containerized environments, so it falls back to
@@ -111,7 +127,7 @@ func renderGreeting(now time.Time, username string, width, height int) string {
 	// to the right edge, which would have broken the horizontal centering
 	// the rest of this block relies on.
 	dateLine := statLabelStyle.Render(now.Format("Monday, January 2, 2006")) +
-		lipgloss.NewStyle().Foreground(colorMuted).Background(colorPaneBg).Render("  ·  v"+Version)
+		lipgloss.NewStyle().Foreground(colorMuted).Background(colorPaneBg).Render("  ·  v"+CurrentVersion())
 
 	lines := append([]string{}, logoLines...)
 	lines = append(lines,

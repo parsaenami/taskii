@@ -20,6 +20,9 @@ func TestMain(m *testing.M) {
 	if err := os.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config")); err != nil {
 		panic(err)
 	}
+	if err := os.Setenv("XDG_CACHE_HOME", filepath.Join(root, "cache")); err != nil {
+		panic(err)
+	}
 	xdg.Reload()
 
 	code := m.Run()

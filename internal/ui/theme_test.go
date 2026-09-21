@@ -278,7 +278,7 @@ func TestSettingsSectionNavigation(t *testing.T) {
 	}
 
 	// Every section renders at the modal's fixed geometry.
-	for _, sec := range []settingsSection{sectionPomodoro, sectionCalendar, sectionLayout, sectionTheme, sectionAbout} {
+	for _, sec := range []settingsSection{sectionPomodoro, sectionCalendar, sectionLayout, sectionTheme, sectionUpdates, sectionAbout} {
 		app.settings.section = sec
 		assertSettingsModalGeometry(t, app)
 	}

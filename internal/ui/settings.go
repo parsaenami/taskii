@@ -23,12 +23,13 @@ const (
 	sectionCalendar
 	sectionLayout
 	sectionTheme
+	sectionUpdates
 	sectionAbout
 
-	sectionCount = 5
+	sectionCount = 6
 )
 
-var settingsSectionNames = [sectionCount]string{"Pomodoro", "Calendar", "Layout", "Theme", "About"}
+var settingsSectionNames = [sectionCount]string{"Pomodoro", "Calendar", "Layout", "Theme", "Updates", "About"}
 
 func (s settingsSection) String() string {
 	if s >= 0 && int(s) < sectionCount {
@@ -123,6 +124,10 @@ type settingsModal struct {
 	themeScroll  int
 	themeChosen  string
 	origTheme    string
+
+	// Updates section. Like Pomodoro and Calendar, this is a scratch value so
+	// Esc can discard it without changing startup behaviour.
+	checkForUpdates bool
 }
 
 // settingsThemeVisibleItems is how many theme rows the Theme content pane
@@ -156,6 +161,8 @@ func (a *App) openSettings() tea.Cmd {
 
 		themeChosen: currentTheme().Name,
 		origTheme:   currentTheme().Name,
+
+		checkForUpdates: a.checkForUpdates,
 	}
 	for i, l := range allLayouts {
 		if l == a.layout {
@@ -244,14 +251,15 @@ func (m *settingsModal) syncThemeScroll() {
 // Layout and theme are already live (previewed as the cursor moved), so
 // committing them means pinning the CHOSEN value rather than whatever the
 // cursor happens to be resting on.
-func (a *App) applyAndClose() {
+func (a *App) applyAndClose() tea.Cmd {
 	s := a.settings
+	wasCheckingForUpdates := a.checkForUpdates
 	oldWorkdays := append([]time.Weekday(nil), a.workdays...)
 	oldWeekStart := a.weekStart
 	oldRoutines := a.routines
 	if err := a.commitCalendar(s.workdays, s.weekStart); err != nil {
 		a.settings.calendarError = err.Error()
-		return
+		return nil
 	}
 	oldPhaseDuration := a.pomo.phaseDuration()
 
@@ -260,6 +268,7 @@ func (a *App) applyAndClose() {
 	a.pomo.longBreakMinutes = s.longBreakMinutes
 	a.pomo.longBreakEvery = s.longBreakEvery
 	a.pomo.autoStartNext = s.autoStartNext
+	a.checkForUpdates = s.checkForUpdates
 
 	if newDuration := a.pomo.phaseDuration(); newDuration != oldPhaseDuration {
 		a.pomo.remaining = newDuration
@@ -270,11 +279,15 @@ func (a *App) applyAndClose() {
 	a.clampSelections()
 	if err := a.persistCalendarCommit(oldWorkdays, oldWeekStart, oldRoutines); err != nil {
 		a.settings.calendarError = err.Error()
-		return
+		return nil
 	}
 
 	a.mode = modeNormal
 	a.status = "Settings saved"
+	if !wasCheckingForUpdates && a.shouldCheckForUpdates() {
+		return checkForUpdatesCmd(a.updateChecker, CurrentVersion())
+	}
+	return nil
 }
 
 // cancelSettings discards the modal, restoring the layout and theme that
@@ -324,8 +337,8 @@ func (a App) updateSettingsNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case "ctrl+s":
-		a.applyAndClose()
-		return a, nil
+		cmd := a.applyAndClose()
+		return a, cmd
 	}
 	return a, nil
 }
@@ -345,6 +358,8 @@ func (a App) updateSettingsContent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a.updateSettingsLayout(msg)
 	case sectionTheme:
 		return a.updateSettingsTheme(msg)
+	case sectionUpdates:
+		return a.updateSettingsUpdates(msg)
 	}
 	a.settings.focus = focusSettingsNav
 	return a, nil
@@ -379,8 +394,8 @@ func (a App) updateSettingsCalendar(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			a.settings.calendarError = err.Error()
 			return a, nil
 		}
-		a.applyAndClose()
-		return a, nil
+		cmd := a.applyAndClose()
+		return a, cmd
 	}
 	return a, nil
 }
@@ -450,8 +465,8 @@ func (a App) updateSettingsPomodoro(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case "enter", "ctrl+s":
-		a.applyAndClose()
-		return a, nil
+		cmd := a.applyAndClose()
+		return a, cmd
 	}
 	return a, nil
 }
@@ -488,8 +503,8 @@ func (a App) updateSettingsLayout(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case "ctrl+s":
-		a.applyAndClose()
-		return a, nil
+		cmd := a.applyAndClose()
+		return a, cmd
 	}
 	return a, nil
 }
@@ -558,6 +573,21 @@ func (a App) updateSettingsTheme(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return a, cmd
+}
+
+func (a App) updateSettingsUpdates(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "left", "h", "tab":
+		a.settings.focus = focusSettingsNav
+		return a, nil
+	case " ":
+		a.settings.checkForUpdates = !a.settings.checkForUpdates
+		return a, nil
+	case "enter", "ctrl+s":
+		cmd := a.applyAndClose()
+		return a, cmd
+	}
+	return a, nil
 }
 
 // adjust changes the selected Pomodoro field by delta steps, clamping
@@ -716,6 +746,10 @@ func (a App) settingsHint() string {
 			b.WriteString(key("↑/↓", "preview"))
 			b.WriteString(key("enter", "choose"))
 			b.WriteString(key("tab", "back"))
+		case sectionUpdates:
+			b.WriteString(key("space", "toggle"))
+			b.WriteString(key("←", "back"))
+			b.WriteString(key("ctrl+s", "save"))
 		}
 	}
 	b.WriteString(paneKeyStyle.Render("[esc]") + paneKeyLabelStyle.Render(" close"))
@@ -772,6 +806,8 @@ func (a App) renderSettingsContent(width int) []string {
 		lines = a.renderSettingsLayout(width)
 	case sectionTheme:
 		lines = a.renderSettingsTheme(width)
+	case sectionUpdates:
+		lines = a.renderSettingsUpdates(width)
 	case sectionAbout:
 		lines = a.renderSettingsAbout(width)
 	}
@@ -978,16 +1014,79 @@ func (a App) renderSettingsTheme(width int) []string {
 	return lines
 }
 
-// renderSettingsAbout shows the TASKII wordmark, project metadata, and the
-// local-storage privacy note, vertically centred in the content pane. The
-// banner falls back to plain text on a pane too narrow for the block letters,
-// same as the greeting.
+// renderSettingsUpdates keeps the network choice explicit and shows the last
+// successful result. Checking is asynchronous; failures stay silent and leave
+// the previous successful release information in place.
+func (a App) renderSettingsUpdates(width int) []string {
+	m := a.settings
+	blank := lipgloss.NewStyle().Background(colorPaneBg)
+	muted := lipgloss.NewStyle().Foreground(colorMuted).Background(colorPaneBg)
+	text := lipgloss.NewStyle().Foreground(colorText).Background(colorPaneBg)
+	accent := lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Background(colorPaneBg)
+	green := lipgloss.NewStyle().Bold(true).Foreground(colorGreen).Background(colorPaneBg)
+	warning := lipgloss.NewStyle().Bold(true).Foreground(colorWarning).Background(colorPaneBg)
+
+	rowBg := colorPaneBg
+	if m.focus == focusSettingsContent {
+		rowBg = colorPanel
+	}
+	rowLabel := lipgloss.NewStyle().Foreground(colorText).Background(rowBg).Render(" Automatic checks")
+	toggle := "On"
+	if !m.checkForUpdates {
+		toggle = "Off"
+	}
+	rowValue := lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Background(rowBg).Render(toggle + " ")
+	gap := width - lipgloss.Width(rowLabel) - lipgloss.Width(rowValue)
+	if gap < 1 {
+		gap = 1
+	}
+	row := rowLabel + lipgloss.NewStyle().Background(rowBg).Render(strings.Repeat(" ", gap)) + rowValue
+
+	line := func(s string, style lipgloss.Style) string {
+		return padPanelLine(style.Render(" "+s), width, colorPaneBg)
+	}
+	current := CurrentVersion()
+	if current == "dev" {
+		current = "development build"
+	} else {
+		current = "v" + current
+	}
+
+	statusText := "Checks run automatically at startup"
+	statusStyle := muted
+	if !m.checkForUpdates {
+		statusText = "Automatic checks are disabled"
+	} else if a.updateChecked && a.updateResult.Available {
+		statusText = fmt.Sprintf("Update available: v%s → v%s", a.updateResult.Current, a.updateResult.Latest)
+		statusStyle = warning
+	} else if a.updateChecked {
+		statusText = "Taskii is up to date"
+		statusStyle = green
+	}
+
+	lines := []string{
+		padPanelLine(row, width, rowBg),
+		blank.Render(strings.Repeat(" ", width)),
+		line("Current  "+current, text),
+		line(statusText, statusStyle),
+		line("Successful checks are cached for 24 hours", muted),
+		blank.Render(strings.Repeat(" ", width)),
+		line("Upgrade", accent),
+		line("brew upgrade parsaenami/tap/taskii", text),
+		line("or reinstall from:", muted),
+		line("github.com/parsaenami/taskii/releases/latest", text),
+	}
+	return lines
+}
+
+// renderSettingsAbout shows the TASKII wordmark and project metadata,
+// vertically centred in the content pane. The banner falls back to plain text
+// on a pane too narrow for the block letters, same as the greeting.
 func (a App) renderSettingsAbout(width int) []string {
 	blank := lipgloss.NewStyle().Background(colorPaneBg)
 	logoStyle := lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Background(colorPaneBg)
 	creatorStyle := lipgloss.NewStyle().Foreground(colorText).Background(colorPaneBg)
 	repoStyle := lipgloss.NewStyle().Foreground(colorAccent).Background(colorPaneBg)
-	privacyStyle := lipgloss.NewStyle().Foreground(colorMuted).Background(colorPaneBg)
 
 	// Fit plain text before applying ANSI styling. This keeps narrow About
 	// panes safe without asking lipgloss to re-wrap already-styled content.
@@ -1007,14 +1106,12 @@ func (a App) renderSettingsAbout(width int) []string {
 		art = []string{centered("TASKII", logoStyle)}
 	}
 
-	version := centered("v"+Version, statLabelStyle.Background(colorPaneBg))
+	version := centered("v"+CurrentVersion(), statLabelStyle.Background(colorPaneBg))
 	creator := centered("Created by Parsa Enami", creatorStyle)
 	repository := centered("https://github.com/parsaenami/taskii", repoStyle)
-	privacy := centered("Local JSON storage; no cloud or account", privacyStyle)
 
-	// Centre the block vertically: banner, version, creator, repository, and
-	// privacy lines with one spacer after the wordmark.
-	block := len(art) + 5
+	// Centre the block vertically with one spacer after the wordmark.
+	block := len(art) + 4
 	top := (settingsContentLines - block) / 2
 	if top < 0 {
 		top = 0
@@ -1026,7 +1123,7 @@ func (a App) renderSettingsAbout(width int) []string {
 	}
 	lines = append(lines, art...)
 	lines = append(lines, blank.Render(strings.Repeat(" ", width)))
-	lines = append(lines, version, creator, repository, privacy)
+	lines = append(lines, version, creator, repository)
 	return lines
 }
 

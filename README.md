@@ -89,6 +89,13 @@ workdays and a Monday week start. Calendar edits are applied only when Settings
 is saved; changing workdays first settles outstanding routine days against the
 previous workday definition, while changing week start never rewrites history.
 
+Taskii checks GitHub Releases for a newer stable version when it starts. Checks
+are asynchronous, cached for 24 hours under the platform's XDG cache directory,
+and never block startup or turn network failures into application errors. When
+an update exists, the status line suggests upgrading from the running version
+to the latest release. Disable this network request at any time in
+**Settings > Updates**; mock and development builds never perform it.
+
 ## Keybindings
 
 Bindings are contextual: actions that do not apply to the focused pane are
@@ -109,7 +116,7 @@ inactive. Press `?` at any time for the complete in-app shortcuts reference.
 | `e` | Expand/shrink Notes; edit a routine in the routine manager |
 | `R` | Open the routine manager, including in `--simple` mode |
 | `p` / `r` / `n` | Pause/resume, reset, or skip the Pomodoro phase |
-| `S` | Open Settings for themes, layouts, Pomodoro, and calendar preferences |
+| `S` | Open Settings for themes, layouts, Pomodoro, calendar, and update preferences |
 | `?` | Open/close the categorized shortcuts reference |
 | `q` / `ctrl+c` | Quit |
 
@@ -190,6 +197,7 @@ The saved JSON format is unchanged: the scheduled day is stored in `Task.Date`.
 - **Reports** — task completion with 7-day/monthly bars and a contribution heatmap, plus a configurable-week routine matrix and follow-through summary.
 - **Themes** — 7 curated core themes, 340+ searchable terminal themes, and extensible custom JSON/JSONL theme support, all available from Settings (`S`).
 - **Layouts** — multiple pane arrangements selected and previewed from Settings (`S`).
+- **Update checks** — optional daily GitHub Release checks with an in-app version upgrade suggestion, configured from Settings > Updates.
 
 ## Custom Themes
 
