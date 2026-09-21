@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/parsaenami/taskii/internal/model"
 	"github.com/parsaenami/taskii/internal/stats"
 )
 
@@ -271,13 +273,19 @@ func renderHeatmap(cells []stats.HeatmapCell, legend legendPlacement) string {
 	return strings.Join(rows, "\n")
 }
 
-// renderReports lays out progress bars, the contribution heatmap, and streak
-// within an exact content height so it never overflows renderPane's fixed
-// box: lipgloss's .Height() is a floor, not a cap, so content taller than
-// the box grows it and pushes the header off the top of the terminal.
+// renderReports lays out task charts or the routine-week matrix within an
+// exact content height so it never overflows renderPane's fixed box.
 // reportsHeaderLines is everything above the chart: the 2-line progress row
 // (label + bar), a blank, the chart selector, and the blank before the chart.
 const reportsHeaderLines = 2 + 1 + 1 + 1
+
+// The routines view replaces Today's task progress with its own summary and
+// follow-through row. The label and progress bar share one line, and the
+// matrix scrolls within the remaining space instead of making Reports grow.
+const routineReportsHeaderLines = 1 + 1 + 1 + 1 + 1
+
+// Weekday/date headings and the legend remain fixed while routine rows scroll.
+const routineMatrixFixedLines = 2 + 1
 
 // reportsFullContentLines is the content height at which renderReports can
 // show everything, sized to the tallest chart (the heatmap). Layouts that
@@ -296,9 +304,10 @@ const heatmapCost = heatmapGridLines + heatmapLegendCost
 // the key doesn't sit flush against the grid, plus the key itself.
 const heatmapLegendCost = 2
 
-// reportsMinContentLines is the header alone — what Reports keeps when the
-// column is too tight for any chart at all.
-const reportsMinContentLines = reportsHeaderLines
+// reportsMinContentLines fits the taller routine summary and a resize/empty
+// hint. Task charts retain the same full-height budget and contribution
+// visibility; routine rows scroll within whatever remains.
+const reportsMinContentLines = routineReportsHeaderLines + 1
 
 // renderReports lays out today's progress, a chart selector and the selected
 // chart within an exact content height so it never overflows renderPane's
@@ -306,7 +315,10 @@ const reportsMinContentLines = reportsHeaderLines
 //
 // chart selects which chart is shown; focused draws the selector highlighted
 // so it's clear the arrow keys will move it.
-func renderReports(r stats.Report, width, height int, chart reportChart, focused bool) string {
+func renderReports(r stats.Report, routines stats.RoutineWeekReport, definitions []model.Routine, width, height int, chart reportChart, focused bool, routineScroll int) string {
+	if chart == chartRoutines {
+		return renderRoutineReports(routines, definitions, width, height, chart, focused, routineScroll)
+	}
 	// No title row here — renderPane draws "Reports" on the top border.
 	sections := []string{
 		renderProgressRow("Today", r.Today, width),
@@ -324,6 +336,234 @@ func renderReports(r stats.Report, width, height int, chart reportChart, focused
 	}
 
 	return strings.Join(sections, "\n")
+}
+
+func reportLine(text string, width int, style lipgloss.Style) string {
+	if width < 1 {
+		return ""
+	}
+	text = fitToWidth(text, width)
+	line := style.Render(text)
+	if pad := width - lipgloss.Width(line); pad > 0 {
+		line += lipgloss.NewStyle().Background(colorPaneBg).Render(strings.Repeat(" ", pad))
+	}
+	return line
+}
+
+func renderFollowThrough(pct float64, pctText string, width int) string {
+	if width < 1 {
+		return ""
+	}
+	const label = "Follow-through"
+	labelWidth := lipgloss.Width(label)
+	if width <= labelWidth {
+		return reportLine(label, width, statLabelStyle)
+	}
+
+	// The gap belongs to the pane surface rather than either styled span, and
+	// is deliberately exactly one cell wide.
+	line := statLabelStyle.Render(label) + lipgloss.NewStyle().Background(colorPaneBg).Render(" ")
+	remaining := width - labelWidth - 1
+	suffix := " " + pctText
+	barWidth := remaining - lipgloss.Width(suffix)
+	if barWidth < 1 {
+		// On very narrow panes, preserve a visible bar before the percentage.
+		barWidth = remaining
+		suffix = ""
+	}
+	line += renderGradientBar(pct, barWidth, percentColor(pct))
+	if suffix != "" {
+		line += lipgloss.NewStyle().Bold(true).Foreground(percentColor(pct)).Background(colorPaneBg).Render(suffix)
+	}
+	return line
+}
+
+func renderRoutineReports(report stats.RoutineWeekReport, definitions []model.Routine, width, height int, chart reportChart, focused bool, scroll int) string {
+	if width < 1 || height < 1 {
+		return ""
+	}
+	blank := lipgloss.NewStyle().Background(colorPaneBg).Render(strings.Repeat(" ", width))
+	summary := fmt.Sprintf("This week  %d done · %d skipped · %d missed", report.Completed, report.Skipped, report.Missed)
+	lines := []string{reportLine(summary, width, statValueStyle)}
+
+	pctText := "—"
+	pct := 0.0
+	if report.FollowThrough.Total > 0 {
+		pct = report.FollowThrough.Percent()
+		pctText = fmt.Sprintf("%.1f%%", pct)
+	}
+	bar := renderFollowThrough(pct, pctText, width)
+	// Very short panes cannot hold the full summary/header plus even one matrix
+	// row. Degrade deliberately while reserving the final row for an explicit
+	// hint; blindly truncating the normal layout would cut that hint off first.
+	if height < routineReportsHeaderLines+1 {
+		short := []string{lines[0]}
+		if height >= 3 {
+			short = append(short, bar)
+		}
+		if height >= 4 {
+			short = append(short, renderChartTabs(chart, focused, width))
+		}
+		if len(short) < height {
+			short = append(short, reportLine("Resize to see the routine week", width, statLabelStyle))
+		}
+		return strings.Join(short[:min(len(short), height)], "\n")
+	}
+	lines = append(lines, bar, blank, renderChartTabs(chart, focused, width), blank)
+
+	remaining := height - len(lines)
+	var body string
+	switch {
+	case len(definitions) == 0:
+		body = reportLine("(no routines yet — press R in Tasks)", width, statLabelStyle)
+	case remaining < routineMatrixFixedLines+1 || width < routineMatrixMinWidth:
+		body = reportLine("Resize to see the routine week", width, statLabelStyle)
+	default:
+		body = renderRoutineMatrix(report, definitions, width, remaining, scroll)
+	}
+	if body != "" {
+		lines = append(lines, strings.Split(body, "\n")...)
+	}
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	return strings.Join(lines, "\n")
+}
+
+const routineMatrixMinWidth = 32
+
+// Each day gets two characters for its label plus a one-cell gutter. Keeping
+// the gutter inside the column also spaces the status symbols consistently.
+const routineDayColumnWidth = 3
+
+func renderRoutineMatrix(report stats.RoutineWeekReport, definitions []model.Routine, width, height, scroll int) string {
+	if width < routineMatrixMinWidth || height < routineMatrixFixedLines+1 {
+		return reportLine("Resize to see the routine week", width, statLabelStyle)
+	}
+	titleWidth := width - 1 - 7*routineDayColumnWidth // title + one gap + seven day columns
+	if titleWidth < 1 {
+		return reportLine("Resize to see the routine week", width, statLabelStyle)
+	}
+
+	byID := make(map[string]model.Routine, len(definitions))
+	for _, routine := range definitions {
+		byID[routine.ID] = routine
+	}
+
+	weekdays := make([]string, 7)
+	dates := make([]string, 7)
+	if start, err := time.Parse(model.DateFormat, report.Start); err == nil {
+		for i := 0; i < 7; i++ {
+			day := start.AddDate(0, 0, i)
+			weekdays[i] = day.Format("Mon")[:2]
+			dates[i] = day.Format("02")
+		}
+	}
+	header := func(labels []string) string {
+		line := statLabelStyle.Render(strings.Repeat(" ", titleWidth+1))
+		for _, label := range labels {
+			line += statLabelStyle.Render(fmt.Sprintf("%-*s", routineDayColumnWidth, label))
+		}
+		return line
+	}
+	rows := []string{header(weekdays), header(dates)}
+
+	// The final fixed row is the legend, which is appended after the viewport.
+	// The two heading rows are already present in rows.
+	visible := height - routineMatrixFixedLines
+	if visible < 1 {
+		visible = 1
+	}
+	maxScroll := len(report.Routines) - visible
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	scroll = max(0, min(scroll, maxScroll))
+	end := min(len(report.Routines), scroll+visible)
+	for _, week := range report.Routines[scroll:end] {
+		title := week.RoutineID
+		if routine, ok := byID[week.RoutineID]; ok {
+			title = routine.Title
+		}
+		line := reportLine(title, titleWidth, taskStyle) + taskStyle.Render(" ")
+		for _, day := range week.Days {
+			symbol, style := routineStatusCell(day.Status)
+			line += style.Render(fmt.Sprintf("%-*s", routineDayColumnWidth, symbol))
+		}
+		rows = append(rows, line)
+	}
+
+	if missing := visible - (end - scroll); missing > 0 {
+		blank := lipgloss.NewStyle().Background(colorPaneBg).Render(strings.Repeat(" ", width))
+		for i := 0; i < missing; i++ {
+			rows = append(rows, blank)
+		}
+	}
+	legend := routineLegend(width)
+	rows = append(rows, legend)
+	return strings.Join(rows, "\n")
+}
+
+func routineStatusCell(status stats.DayStatus) (string, lipgloss.Style) {
+	color := colorMuted
+	symbol := "·"
+	switch status {
+	case stats.DayComplete:
+		color, symbol = colorGreen, "●"
+	case stats.DaySkipped:
+		color, symbol = colorWarning, "–"
+	case stats.DayMissed:
+		color, symbol = colorDanger, "×"
+	case stats.DayPending:
+		color, symbol = colorAccent, "○"
+	case stats.DayNotDue, stats.DayFuture:
+		color, symbol = colorMuted, "·"
+	}
+	return symbol, lipgloss.NewStyle().Foreground(color).Background(colorPaneBg)
+}
+
+func routineLegend(width int) string {
+	type item struct {
+		status stats.DayStatus
+		label  string
+	}
+	items := []item{
+		{stats.DayComplete, "done"}, {stats.DaySkipped, "skipped"},
+		{stats.DayMissed, "missed"}, {stats.DayPending, "pending"},
+		{stats.DayNotDue, "not due/future"},
+	}
+	measure := func(items []item) int {
+		parts := make([]string, len(items))
+		for i, item := range items {
+			symbol, _ := routineStatusCell(item.status)
+			parts[i] = symbol + " " + item.label
+		}
+		return lipgloss.Width(strings.Join(parts, "  "))
+	}
+	if measure(items) > width {
+		items = []item{
+			{stats.DayComplete, "done"}, {stats.DaySkipped, "skip"},
+			{stats.DayMissed, "miss"}, {stats.DayPending, "pending"},
+			{stats.DayNotDue, "other"},
+		}
+	}
+	legendWidth := measure(items)
+	if legendWidth > width {
+		return reportLine("Resize to see legend", width, statLabelStyle)
+	}
+	left := (width - legendWidth) / 2
+	line := lipgloss.NewStyle().Background(colorPaneBg).Render(strings.Repeat(" ", left))
+	for i, item := range items {
+		if i > 0 {
+			line += statLabelStyle.Render("  ")
+		}
+		symbol, style := routineStatusCell(item.status)
+		line += style.Render(symbol) + statLabelStyle.Render(" "+item.label)
+	}
+	if pad := width - lipgloss.Width(line); pad > 0 {
+		line += lipgloss.NewStyle().Background(colorPaneBg).Render(strings.Repeat(" ", pad))
+	}
+	return line
 }
 
 // centerBlock centres a multi-line block horizontally within width, padding
@@ -376,7 +616,7 @@ func renderSelectedChart(r stats.Report, chart reportChart, width, height int) s
 		}
 		return renderBarChart(r.MonthBars, width, height, every)
 
-	default:
+	case chartContribution:
 		if width < 3+3*2 {
 			return ""
 		}
@@ -400,26 +640,28 @@ func renderSelectedChart(r stats.Report, chart reportChart, width, height int) s
 			heatmap = heatmap[(haveWeeks-availableWeeks)*7:]
 		}
 		return renderHeatmap(heatmap, legend)
+	default:
+		return ""
 	}
 }
 
-// renderChartTabs draws the Week / Month / Contribution selector. When the
+// renderChartTabs draws the 7 Days / Month / Contribution / Routines selector. When the
 // pane is focused the active tab is filled with the accent colour, so it's
 // obvious the arrow keys act here; unfocused it's a quieter underline.
 func renderChartTabs(chart reportChart, focused bool, width int) string {
-	// Full labels need ~29 cells; below that they'd be truncated mid-word and
+	// Full labels need a wide pane; below that they'd be truncated mid-word and
 	// the selector stops being readable exactly where switching still matters,
 	// so fall back to initials.
-	short := width < 29
+	short := width < 46
 
 	var b strings.Builder
-	for i := chartWeek; i <= chartContribution; i++ {
+	for i := chartWeek; i <= chartRoutines; i++ {
 		if i > chartWeek {
 			b.WriteString(statLabelStyle.Render(" "))
 		}
 		name := i.String()
 		if short {
-			name = name[:1]
+			name = map[reportChart]string{chartWeek: "7", chartMonth: "M", chartContribution: "C", chartRoutines: "R"}[i]
 		}
 		switch {
 		case i == chart && focused:

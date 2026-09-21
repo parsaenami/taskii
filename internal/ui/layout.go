@@ -125,7 +125,7 @@ func (a App) geometry() geometry {
 	if a.layout == layoutStacked {
 		// One full-width row of info panes on top, tasks filling the rest.
 		// The info row is sized so Reports can show everything it has
-		// (progress rows + heatmap + streak) rather than to the greeting's
+		// (progress rows + heatmap) rather than to the greeting's
 		// smaller fixed content — otherwise the heatmap and streak silently
 		// drop out, which is what this row is mostly there to show.
 		infoHeight := reportsFullContentLines + 2
@@ -230,14 +230,14 @@ func (a App) geometry() geometry {
 	}
 
 	// Reports is FIXED at the height it needs to show everything (progress
-	// rows + heatmap + streak); Notes is the flexible pane and absorbs all
+	// rows + heatmap); Notes is the flexible pane and absorbs all
 	// remaining space. Reports' content is a known, bounded set, so extra
 	// height beyond reportsFullContentLines just becomes blank filler —
 	// whereas Notes is unbounded and every extra row shows another bullet.
 	//
 	// On short columns Reports still has to give: it shrinks toward
-	// reportsMinContentLines (renderReports drops the heatmap, then the
-	// streak) so Notes keeps a usable minimum.
+	// reportsMinContentLines (renderReports drops its chart body) so Notes
+	// keeps a usable minimum.
 	g.notesWidth = g.infoWidth
 	remaining := bodyHeight - g.greetHeight - g.pomoHeight
 

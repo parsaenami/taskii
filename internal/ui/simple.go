@@ -11,22 +11,24 @@ import (
 	"github.com/parsaenami/taskii/internal/model"
 )
 
-// simpleEntry is one row of the combined list: a task (today's or overdue) or
-// a note. Purely a view-level projection — the stored data structures are
-// untouched, the two collections are just merged for display.
+// simpleEntry is one row of the combined list: a routine, task (today's or
+// overdue), or note. Purely a view-level projection — the stored data
+// structures are untouched; routines precede the creation-sorted task/note list.
 type simpleEntry struct {
-	created time.Time
-	isNote  bool
-	task    model.Task
-	overdue bool
-	note    model.Note
+	created   time.Time
+	isRoutine bool
+	routine   model.Routine
+	isNote    bool
+	task      model.Task
+	overdue   bool
+	note      model.Note
 	// noteIndex/taskID map a row back to its source so selection can act on
 	// the right item without re-deriving it from the row's position.
 	noteIndex int
 }
 
-// simpleEntries merges tasks and notes into one list ordered by creation time,
-// oldest first. Today's tasks, overdue tasks and notes all appear together.
+// simpleEntries merges tasks and notes by creation time (oldest first) and
+// prepends today's due routines as a separate section.
 func (a App) simpleEntries() []simpleEntry {
 	if a.upcoming {
 		var out []simpleEntry
@@ -62,7 +64,13 @@ func (a App) simpleEntries() []simpleEntry {
 	sort.SliceStable(out, func(i, j int) bool {
 		return out[i].created.Before(out[j].created)
 	})
-	return out
+	// Routines have no creation-order relationship to tasks and notes. They
+	// form a dedicated section above the sorted combined list.
+	var due []simpleEntry
+	for _, r := range a.dueRoutines() {
+		due = append(due, simpleEntry{isRoutine: true, routine: r})
+	}
+	return append(due, out...)
 }
 
 // simpleDisplayLine is one rendered row, tagged with the entry it belongs to
@@ -87,7 +95,17 @@ const simpleNoteMarker = " • "
 // one row each (truncated); notes wrap, since they have no length limit.
 func (a App) simpleLines(entries []simpleEntry, width int) []simpleDisplayLine {
 	var out []simpleDisplayLine
+	if len(entries) > 0 && entries[0].isRoutine {
+		out = append(out, simpleDisplayLine{entryIndex: -1, text: "ROUTINES"})
+	}
 	for i, e := range entries {
+		if i > 0 && entries[i-1].isRoutine && !e.isRoutine {
+			out = append(out, simpleDisplayLine{entryIndex: -1, text: "TASKS / NOTES"})
+		}
+		if e.isRoutine {
+			out = append(out, simpleDisplayLine{entryIndex: i, first: true})
+			continue
+		}
 		if !e.isNote {
 			out = append(out, simpleDisplayLine{entryIndex: i, first: true})
 			continue
@@ -135,8 +153,16 @@ func (a App) renderSimpleList(entries []simpleEntry, visibleRows, width int) str
 	var lines []string
 	for i := scroll; i < end; i++ {
 		dl := all[i]
+		if dl.entryIndex < 0 {
+			lines = append(lines, padPanelLine(lipgloss.NewStyle().Bold(true).Foreground(colorMuted).Background(colorBg).Render(dl.text), width, colorBg))
+			continue
+		}
 		e := entries[dl.entryIndex]
 		selected := dl.entryIndex == a.simpleSelected
+		if e.isRoutine {
+			lines = append(lines, renderRoutineLine(e.routine, selected, width, colorBg, a.now().Format(dateFormat)))
+			continue
+		}
 
 		if e.isNote {
 			bg := colorBg
@@ -263,6 +289,9 @@ func (a App) simpleBodyHeight() int {
 func (a App) simpleVisibleRows() int {
 	// -1 for the scroll indicator, -simpleTabsHeight for the TASK/NOTE tabs.
 	rows := a.simpleBodyHeight() - 1 - simpleTabsHeight
+	if !a.upcoming && len(a.dueRoutines()) > 0 {
+		rows--
+	}
 	if a.mode == modeAdding {
 		rows--
 	}
@@ -319,7 +348,12 @@ func (a App) renderSimple() string {
 	bodyHeight := a.simpleBodyHeight()
 
 	entries := a.simpleEntries()
-	list := a.renderSimpleTabs(lw) + "\n" +
+	list := a.renderSimpleTabs(lw) + "\n"
+	if !a.upcoming && len(a.dueRoutines()) > 0 {
+		label := lipgloss.NewStyle().Bold(true).Foreground(colorMuted).Background(colorBg).Render("ROUTINES")
+		list += padPanelLine(label, lw, colorBg) + "\n"
+	}
+	list +=
 		a.renderSimpleList(entries, a.simpleVisibleRows(), lw)
 
 	if a.mode == modeAdding {

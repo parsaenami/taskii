@@ -4,10 +4,13 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/parsaenami/taskii/internal/model"
 )
 
 // settingsSection is one entry in the modal's left-hand nav column. Each
@@ -17,14 +20,15 @@ type settingsSection int
 
 const (
 	sectionPomodoro settingsSection = iota
+	sectionCalendar
 	sectionLayout
 	sectionTheme
 	sectionAbout
 
-	sectionCount = 4
+	sectionCount = 5
 )
 
-var settingsSectionNames = [sectionCount]string{"Pomodoro", "Layout", "Theme", "About"}
+var settingsSectionNames = [sectionCount]string{"Pomodoro", "Calendar", "Layout", "Theme", "About"}
 
 func (s settingsSection) String() string {
 	if s >= 0 && int(s) < sectionCount {
@@ -97,6 +101,13 @@ type settingsModal struct {
 	longBreakEvery    int
 	autoStartNext     bool
 
+	// Calendar section. Both fields are scratch values: unlike Layout/Theme,
+	// calendar changes have no live preview and Esc always discards them.
+	calendarCursor int // 0 = week start; 1..7 = workdays in displayed order
+	workdays       []time.Weekday
+	weekStart      time.Weekday
+	calendarError  string
+
 	// Layout section. layoutCursor is the previewed layout; layoutChosen is
 	// the one actually committed with enter/space (shown as "selected");
 	// origLayout is what Esc restores.
@@ -136,6 +147,9 @@ func (a *App) openSettings() tea.Cmd {
 		longBreakMinutes:  a.pomo.longBreakMinutes,
 		longBreakEvery:    a.pomo.longBreakEvery,
 		autoStartNext:     a.pomo.autoStartNext,
+
+		workdays:  append([]time.Weekday(nil), a.workdays...),
+		weekStart: a.weekStart,
 
 		layoutChosen: a.layout,
 		origLayout:   a.layout,
@@ -232,6 +246,13 @@ func (m *settingsModal) syncThemeScroll() {
 // cursor happens to be resting on.
 func (a *App) applyAndClose() {
 	s := a.settings
+	oldWorkdays := append([]time.Weekday(nil), a.workdays...)
+	oldWeekStart := a.weekStart
+	oldRoutines := a.routines
+	if err := a.commitCalendar(s.workdays, s.weekStart); err != nil {
+		a.settings.calendarError = err.Error()
+		return
+	}
 	oldPhaseDuration := a.pomo.phaseDuration()
 
 	a.pomo.workMinutes = s.workMinutes
@@ -247,10 +268,13 @@ func (a *App) applyAndClose() {
 	a.layout = s.layoutChosen
 	setThemeByName(s.themeChosen)
 	a.clampSelections()
+	if err := a.persistCalendarCommit(oldWorkdays, oldWeekStart, oldRoutines); err != nil {
+		a.settings.calendarError = err.Error()
+		return
+	}
 
 	a.mode = modeNormal
 	a.status = "Settings saved"
-	a.saveSettings()
 }
 
 // cancelSettings discards the modal, restoring the layout and theme that
@@ -315,6 +339,8 @@ func (a App) updateSettingsContent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch a.settings.section {
 	case sectionPomodoro:
 		return a.updateSettingsPomodoro(msg)
+	case sectionCalendar:
+		return a.updateSettingsCalendar(msg)
 	case sectionLayout:
 		return a.updateSettingsLayout(msg)
 	case sectionTheme:
@@ -322,6 +348,83 @@ func (a App) updateSettingsContent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	a.settings.focus = focusSettingsNav
 	return a, nil
+}
+
+func (a App) updateSettingsCalendar(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "left", "h", "tab":
+		a.settings.focus = focusSettingsNav
+		return a, nil
+
+	case "up", "k":
+		a.settings.calendarCursor = (a.settings.calendarCursor + 7) % 8
+		a.settings.calendarError = ""
+		return a, nil
+
+	case "down", "j":
+		a.settings.calendarCursor = (a.settings.calendarCursor + 1) % 8
+		a.settings.calendarError = ""
+		return a, nil
+
+	case " ":
+		if a.settings.calendarCursor == 0 {
+			a.settings.weekStart = time.Weekday((int(a.settings.weekStart) + 1) % 7)
+		} else {
+			a.settings.toggleCalendarWorkday(a.settings.calendarDayAtCursor())
+		}
+		return a, nil
+
+	case "enter", "ctrl+s":
+		if err := model.ValidateWeekdays(a.settings.workdays); err != nil {
+			a.settings.calendarError = err.Error()
+			return a, nil
+		}
+		a.applyAndClose()
+		return a, nil
+	}
+	return a, nil
+}
+
+func (m settingsModal) calendarDays() []time.Weekday {
+	days := make([]time.Weekday, 7)
+	for i := range days {
+		days[i] = time.Weekday((int(m.weekStart) + i) % 7)
+	}
+	return days
+}
+
+func (m settingsModal) calendarDayAtCursor() time.Weekday {
+	if m.calendarCursor < 1 || m.calendarCursor > 7 {
+		return m.weekStart
+	}
+	return m.calendarDays()[m.calendarCursor-1]
+}
+
+func (m settingsModal) isWorkday(day time.Weekday) bool {
+	for _, selected := range m.workdays {
+		if selected == day {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *settingsModal) toggleCalendarWorkday(day time.Weekday) {
+	if m.isWorkday(day) {
+		if len(m.workdays) == 1 {
+			m.calendarError = "At least one workday is required"
+			return
+		}
+		for i, selected := range m.workdays {
+			if selected == day {
+				m.workdays = append(m.workdays[:i], m.workdays[i+1:]...)
+				break
+			}
+		}
+	} else {
+		m.workdays = append(m.workdays, day)
+	}
+	m.calendarError = ""
 }
 
 func (a App) updateSettingsPomodoro(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -381,7 +484,7 @@ func (a App) updateSettingsLayout(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.settings.origLayout = a.settings.layoutChosen
 		a.clampSelections()
 		a.status = "Layout: " + a.settings.layoutChosen.String()
-		a.saveSettings()
+		_ = a.saveSettings()
 		return a, nil
 
 	case "ctrl+s":
@@ -440,7 +543,7 @@ func (a App) updateSettingsTheme(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// theme becomes the new Esc restore point.
 			a.settings.origTheme = selected.Name
 			a.status = "Theme: " + selected.Name
-			a.saveSettings()
+			_ = a.saveSettings()
 		}
 		return a, nil
 	}
@@ -528,7 +631,7 @@ func (m settingsModal) valueText(i int) string {
 // settings form reads better at a stable width than one that stretches with
 // an ultra-wide window. It's wider than the old single-column modal because
 // the box now holds a nav column AND a content pane side by side.
-const settingsModalWidth = 64
+const settingsModalWidth = 70
 
 // settingsNavWidth is the display width of the left-hand section list,
 // including its one-column leading gutter for the ▸ cursor. Fixed so the
@@ -600,6 +703,11 @@ func (a App) settingsHint() string {
 			b.WriteString(key("↑/↓", "field"))
 			b.WriteString(key("←/→", "change"))
 			b.WriteString(key("tab", "back"))
+		case sectionCalendar:
+			b.WriteString(key("↑/↓", "row"))
+			b.WriteString(key("space", "edit"))
+			b.WriteString(key("←", "back"))
+			b.WriteString(key("ctrl+s", "save"))
 		case sectionLayout:
 			b.WriteString(key("↑/↓", "preview"))
 			b.WriteString(key("enter", "choose"))
@@ -658,6 +766,8 @@ func (a App) renderSettingsContent(width int) []string {
 	switch a.settings.section {
 	case sectionPomodoro:
 		lines = a.renderSettingsPomodoro(width)
+	case sectionCalendar:
+		lines = a.renderSettingsCalendar(width)
 	case sectionLayout:
 		lines = a.renderSettingsLayout(width)
 	case sectionTheme:
@@ -673,6 +783,48 @@ func (a App) renderSettingsContent(width int) []string {
 	if len(lines) > settingsContentLines {
 		lines = lines[:settingsContentLines]
 	}
+	return lines
+}
+
+func (a App) renderSettingsCalendar(width int) []string {
+	m := a.settings
+	contentFocused := m.focus == focusSettingsContent
+	blank := lipgloss.NewStyle().Background(colorPaneBg)
+
+	row := func(label, value string, selected bool) string {
+		rowBg := colorPaneBg
+		labelStyle := lipgloss.NewStyle().Foreground(colorText).Background(rowBg)
+		valueStyle := lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Background(rowBg)
+		if selected {
+			rowBg = colorPanel
+			labelStyle = lipgloss.NewStyle().Bold(true).Foreground(colorText).Background(rowBg)
+			valueStyle = lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Background(rowBg)
+		}
+		left := labelStyle.Render(" " + label)
+		right := valueStyle.Render(value + " ")
+		pad := width - lipgloss.Width(left) - lipgloss.Width(right)
+		if pad < 1 {
+			pad = 1
+		}
+		return padPanelLine(left+lipgloss.NewStyle().Background(rowBg).Render(strings.Repeat(" ", pad))+right, width, rowBg)
+	}
+
+	lines := []string{row("Week starts", m.weekStart.String(), contentFocused && m.calendarCursor == 0)}
+	for i, day := range m.calendarDays() {
+		mark := "[ ]"
+		if m.isWorkday(day) {
+			mark = "[x]"
+		}
+		lines = append(lines, row(day.String(), mark, contentFocused && m.calendarCursor == i+1))
+	}
+	lines = append(lines, blank.Render(strings.Repeat(" ", width)))
+	message := "Workdays define workday routines"
+	style := lipgloss.NewStyle().Foreground(colorMuted).Background(colorPaneBg)
+	if m.calendarError != "" {
+		message = m.calendarError
+		style = lipgloss.NewStyle().Bold(true).Foreground(colorDanger).Background(colorPaneBg)
+	}
+	lines = append(lines, padPanelLine(style.Render(" "+message), width, colorPaneBg))
 	return lines
 }
 

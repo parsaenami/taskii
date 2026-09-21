@@ -507,6 +507,7 @@ var (
 
 	paneKeyStyle      lipgloss.Style
 	paneKeyLabelStyle lipgloss.Style
+	paneKeySepStyle   lipgloss.Style
 )
 
 func init() {
@@ -621,4 +622,5 @@ func applyTheme(t Theme) {
 	// the pane's surface instead of punching page background through it.
 	paneKeyStyle = lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Background(colorPaneBg)
 	paneKeyLabelStyle = lipgloss.NewStyle().Foreground(colorMuted).Background(colorPaneBg)
+	paneKeySepStyle = lipgloss.NewStyle().Foreground(colorBorder).Background(colorPaneBg)
 }

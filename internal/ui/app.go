@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -36,6 +37,8 @@ const (
 	modeNoteEditing
 	modeConfirmClearNotes
 	modeSettings
+	modeRoutineManager
+	modeRoutineEditor
 )
 
 // dateFormat is an alias for the model package's canonical layout, kept so
@@ -45,6 +48,21 @@ const dateFormat = model.DateFormat
 type App struct {
 	tasks []model.Task
 	now   func() time.Time
+
+	// Calendar preferences are effective values: legacy/empty settings have
+	// already been expanded to Monday-Friday and a Monday week start. Routines
+	// live here even before their panes are implemented so a workday change can
+	// settle outstanding history against the OLD calendar first.
+	routines  []model.Routine
+	workdays  []time.Weekday
+	weekStart time.Weekday
+	// A failed routine load must block workday changes: otherwise Settings
+	// could replace the old workday definition without reconciling routines
+	// that exist on disk but are unavailable in memory. Week-start-only changes
+	// remain safe because they never rewrite routine history.
+	routinesLoadErr error
+	routineDate     string
+	routineUI       routineModal
 
 	width, height int
 
@@ -81,7 +99,8 @@ type App struct {
 
 	// reportChart is which chart the Reports pane shows; navigable with the
 	// arrow keys while that pane is focused.
-	reportChart reportChart
+	reportChart         reportChart
+	routineReportScroll int
 
 	// Simple mode: one pane, one merged list. simpleNoteInput selects which
 	// input tab is active (tab toggles between adding a task and a note).
@@ -100,6 +119,7 @@ type App struct {
 	status       string
 	noPersist    bool
 	deleteItemID string // task/note shown when the delete confirmation opened
+	deleteReturn mode
 
 	username string
 	layout   layout
@@ -122,22 +142,38 @@ type Options struct {
 func NewApp(opts Options) App {
 	var tasks []model.Task
 	errMsg := opts.StartupWarning
+	startupNow := time.Now()
+	appendStartupError := func(message string) {
+		if message == "" {
+			return
+		}
+		if errMsg != "" {
+			errMsg += "; "
+		}
+		errMsg += message
+	}
 
 	if opts.Mock {
-		tasks = mockTasks(time.Now())
+		tasks = mockTasks(startupNow)
 	} else {
 		var err error
 		tasks, err = model.Load()
 		if err != nil {
-			errMsg = "failed to load tasks: " + err.Error()
+			appendStartupError("failed to load tasks: " + err.Error())
 			tasks = []model.Task{}
 		}
 	}
 
 	lay := layoutTasksLeft
 	pomo := newPomodoro()
+	settings := model.Settings{}
 	if !opts.Mock {
-		settings, _ := model.LoadSettings()
+		var err error
+		settings, err = model.LoadSettings()
+		if err != nil {
+			appendStartupError("failed to load settings: " + err.Error())
+			settings = model.Settings{}
+		}
 		if settings.Theme != "" {
 			setThemeByName(settings.Theme)
 		}
@@ -163,8 +199,38 @@ func NewApp(opts Options) App {
 	var notes []model.Note
 	if opts.Mock {
 		notes = mockNotes()
-	} else if n, err := model.LoadNotes(); err == nil {
+	} else if n, err := model.LoadNotes(); err != nil {
+		appendStartupError("failed to load notes: " + err.Error())
+	} else {
 		notes = n
+	}
+
+	workdays := settings.EffectiveWorkdays()
+	weekStart := settings.EffectiveWeekStart()
+	var routines []model.Routine
+	var routinesLoadErr error
+	if !opts.Mock {
+		loaded, err := model.LoadRoutines()
+		if err != nil {
+			routinesLoadErr = err
+			appendStartupError("failed to load routines: " + err.Error())
+		} else {
+			routines = loaded
+			reconciled, changed, reconcileErr := reconcileRoutineSnapshot(routines, startupNow, workdays)
+			switch {
+			case reconcileErr != nil:
+				appendStartupError("failed to reconcile routines: " + reconcileErr.Error())
+			case changed:
+				if err := model.SaveRoutines(reconciled); err != nil {
+					appendStartupError("failed to save reconciled routines: " + err.Error())
+				} else {
+					routines = reconciled
+				}
+			}
+		}
+	}
+	if opts.Mock {
+		routines = mockRoutines(startupNow)
 	}
 
 	ti := textinput.New()
@@ -182,20 +248,25 @@ func NewApp(opts Options) App {
 	ta.KeyMap.InsertNewline.SetEnabled(false)
 
 	return App{
-		tasks:         tasks,
-		now:           time.Now,
-		focus:         focusToday,
-		mode:          modeNormal,
-		input:         ti,
-		notes:         notes,
-		noteInput:     ta,
-		noteEditIndex: -1,
-		simple:        opts.Simple,
-		err:           errMsg,
-		pomo:          pomo,
-		noPersist:     opts.Mock,
-		username:      currentUsername(),
-		layout:        lay,
+		tasks:           tasks,
+		now:             time.Now,
+		routines:        routines,
+		workdays:        workdays,
+		weekStart:       weekStart,
+		routinesLoadErr: routinesLoadErr,
+		routineDate:     startupNow.Format(dateFormat),
+		focus:           focusToday,
+		mode:            modeNormal,
+		input:           ti,
+		notes:           notes,
+		noteInput:       ta,
+		noteEditIndex:   -1,
+		simple:          opts.Simple,
+		err:             errMsg,
+		pomo:            pomo,
+		noPersist:       opts.Mock,
+		username:        currentUsername(),
+		layout:          lay,
 	}
 }
 
@@ -213,6 +284,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case pomodoroTickMsg:
 		// Tasks move between date-based lists at midnight without a reload.
+		a.advanceRoutineDate()
 		a.clampSelections()
 		if a.pomo.tick() {
 			return a, tea.Batch(pomodoroTick(), notifyPhaseChange(a.pomo.phase))
@@ -241,6 +313,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a.updateConfirmClearNotes(msg)
 		case modeSettings:
 			return a.updateSettings(msg)
+		case modeRoutineManager:
+			return a.updateRoutineManager(msg)
+		case modeRoutineEditor:
+			return a.updateRoutineEditor(msg)
 		}
 		return a.updateNormal(msg)
 	}
@@ -257,7 +333,7 @@ var expandedAllowedKeys = map[string]bool{
 	"a": true, "enter": true, "d": true, "C": true, "e": true,
 	"up": true, "k": true, "down": true, "j": true,
 	// App-wide.
-	"q": true, "ctrl+c": true, "S": true,
+	"q": true, "ctrl+c": true, "S": true, "R": true,
 }
 
 // updateSimple is the whole key map for --simple: one list, one selection,
@@ -270,17 +346,26 @@ func (a App) updateSimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c":
 		return a, tea.Quit
+	case "R":
+		a.openRoutineManager()
+		return a, nil
 
 	case "C":
 		a.toggleUpcoming()
 		return a, nil
 
 	case "I":
+		if a.focus == focusReports {
+			return a, nil
+		}
 		a.filterImportant = !a.filterImportant
 		a.clampSelections()
 		return a, nil
 
 	case "U":
+		if a.focus == focusReports {
+			return a, nil
+		}
 		a.filterUndone = !a.filterUndone
 		a.clampSelections()
 		return a, nil
@@ -315,6 +400,11 @@ func (a App) updateSimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		e := entries[a.simpleSelected]
+		if e.isRoutine {
+			a.toggleRoutine(e.routine.ID)
+			a.clampSelections()
+			return a, nil
+		}
 		if e.isNote {
 			if msg.String() == "enter" {
 				return a.startNoteEdit(e.noteIndex)
@@ -335,14 +425,18 @@ func (a App) updateSimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "d":
 		if a.simpleSelected >= 0 && a.simpleSelected < len(entries) {
+			if entries[a.simpleSelected].isRoutine {
+				return a, nil
+			}
 			a.deleteItemID = a.selectedItemID()
+			a.deleteReturn = modeNormal
 			a.mode = modeConfirmDelete
 		}
 		return a, nil
 
 	case "i":
 		if a.simpleSelected >= 0 && a.simpleSelected < len(entries) {
-			if e := entries[a.simpleSelected]; !e.isNote {
+			if e := entries[a.simpleSelected]; !e.isNote && !e.isRoutine {
 				a.toggleImportantByID(e.task.ID)
 				a.clampSelections()
 			}
@@ -351,6 +445,12 @@ func (a App) updateSimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "S":
 		return a, a.openSettings()
+	case "s":
+		if a.simpleSelected >= 0 && a.simpleSelected < len(entries) && entries[a.simpleSelected].isRoutine {
+			a.skipRoutine(entries[a.simpleSelected].routine.ID)
+			a.clampSelections()
+		}
+		return a, nil
 	}
 	return a, nil
 }
@@ -441,7 +541,7 @@ func (a *App) deleteSimpleSelected() {
 			a.notes = append(a.notes[:e.noteIndex], a.notes[e.noteIndex+1:]...)
 			a.persistNotes()
 		}
-	} else {
+	} else if !e.isRoutine {
 		for i := range a.tasks {
 			if a.tasks[i].ID == e.task.ID {
 				a.tasks = append(a.tasks[:i], a.tasks[i+1:]...)
@@ -469,6 +569,9 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c":
 		return a, tea.Quit
+	case "R":
+		a.openRoutineManager()
+		return a, nil
 
 	case "tab":
 		a.focus = (a.focus + 1) % focusCount
@@ -480,19 +583,40 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.clampSelections()
 		return a, nil
 
-	case "up", "k", "left", "h":
-		// On the Reports pane the navigation keys move between charts
-		// rather than between rows — that pane has no list.
+	case "left", "h":
 		if a.focus == focusReports {
 			a.reportChart = a.reportChart.prev()
+			a.routineReportScroll = 0
 			return a, nil
 		}
 		a.moveSelection(-1)
 		return a, nil
 
-	case "down", "j", "right", "l":
+	case "right", "l":
 		if a.focus == focusReports {
 			a.reportChart = a.reportChart.next()
+			a.routineReportScroll = 0
+			return a, nil
+		}
+		a.moveSelection(1)
+		return a, nil
+
+	case "up", "k":
+		if a.focus == focusReports {
+			if a.reportChart == chartRoutines && a.routineReportScroll > 0 {
+				a.routineReportScroll--
+			}
+			return a, nil
+		}
+		a.moveSelection(-1)
+		return a, nil
+
+	case "down", "j":
+		if a.focus == focusReports {
+			if a.reportChart == chartRoutines {
+				a.routineReportScroll++
+				a.clampRoutineReportScroll()
+			}
 			return a, nil
 		}
 		a.moveSelection(1)
@@ -534,6 +658,10 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if a.focus != focusToday {
 				return a, nil
 			}
+			if r := a.selectedTodayRoutine(); r != nil {
+				a.toggleRoutine(r.ID)
+				return a, nil
+			}
 			return a.startTaskEdit(a.selectedTask())
 		}
 		// Space means "done" in Today, but "carry this forward to today" in
@@ -542,6 +670,10 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// the action that pane is actually for.
 		if a.focus == focusOverdue {
 			a.migrateSelected()
+			return a, nil
+		}
+		if r := a.selectedTodayRoutine(); r != nil {
+			a.toggleRoutine(r.ID)
 			return a, nil
 		}
 		a.toggleSelected()
@@ -557,12 +689,17 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if a.focus == focusNotes {
 			if len(a.notes) > 0 {
 				a.deleteItemID = a.selectedItemID()
+				a.deleteReturn = modeNormal
 				a.mode = modeConfirmDelete
 			}
 			return a, nil
 		}
+		if a.selectedTodayRoutine() != nil {
+			return a, nil
+		}
 		if selected := a.selectedTask(); selected != nil {
 			a.deleteItemID = a.selectedItemID()
+			a.deleteReturn = modeNormal
 			a.mode = modeConfirmDelete
 		}
 		return a, nil
@@ -597,13 +734,25 @@ func (a App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			a.toggleImportantSelected()
 		}
 		return a, nil
+	case "s":
+		if r := a.selectedTodayRoutine(); r != nil {
+			a.skipRoutine(r.ID)
+			a.clampSelections()
+		}
+		return a, nil
 
 	case "I":
+		if a.focus == focusReports {
+			return a, nil
+		}
 		a.filterImportant = !a.filterImportant
 		a.clampSelections()
 		return a, nil
 
 	case "U":
+		if a.focus == focusReports {
+			return a, nil
+		}
 		a.filterUndone = !a.filterUndone
 		a.clampSelections()
 		return a, nil
@@ -1266,7 +1415,7 @@ func (a *App) selectTaskByID(id string) {
 	if a.simple {
 		entries := a.simpleEntries()
 		for i, e := range entries {
-			if !e.isNote && e.task.ID == id {
+			if !e.isNote && !e.isRoutine && e.task.ID == id {
 				a.simpleSelected = i
 				a.syncSimpleScroll(entries)
 				return
@@ -1276,7 +1425,7 @@ func (a *App) selectTaskByID(id string) {
 	}
 	for i, t := range a.activeDayTasks() {
 		if t.ID == id {
-			a.todaySelected = i
+			a.todaySelected = i + len(a.dueRoutines())
 			// Selection only follows the cursor in the pane that owns it;
 			// adding is Today-only, so focus Today to make the move visible.
 			a.focus = focusToday
@@ -1301,6 +1450,9 @@ func isTimeLike(s string) bool {
 
 func (a *App) moveSelection(delta int) {
 	n := len(a.currentList())
+	if a.focus == focusToday {
+		n = len(a.todayEntries())
+	}
 	if a.focus == focusNotes {
 		n = len(a.notes)
 	}
@@ -1351,6 +1503,29 @@ func (a *App) syncScroll() {
 		a.notesScroll = scroll
 		return
 	}
+	if a.focus == focusToday {
+		first, last := a.todayLineSpan(a.todaySelected)
+		if first < 0 {
+			a.todayScroll = 0
+			return
+		}
+		// The task row budget excludes the two non-selectable section
+		// headings. With routines present they occupy physical rows in the
+		// viewport; without them, the renderer has only `visible` rows.
+		if !a.upcoming && len(a.dueRoutines()) > 0 {
+			visible += 2
+		}
+		if first < scroll {
+			scroll = first
+		} else if last >= scroll+visible {
+			scroll = last - visible + 1
+		}
+		if scroll < 0 {
+			scroll = 0
+		}
+		a.todayScroll = scroll
+		return
+	}
 
 	sel := a.currentSelected()
 	if sel < scroll {
@@ -1399,7 +1574,7 @@ func (a *App) clampSelections() {
 		a.syncSimpleScroll(entries)
 		return
 	}
-	todayLen := len(a.activeDayTasks())
+	todayLen := len(a.todayEntries())
 	if a.todaySelected >= todayLen {
 		a.todaySelected = todayLen - 1
 	}
@@ -1426,6 +1601,24 @@ func (a *App) clampSelections() {
 		a.syncScroll()
 	}
 	a.focus = focus
+	a.clampRoutineReportScroll()
+}
+
+func (a App) routineReportVisibleRows() int {
+	contentHeight := a.geometry().reportsHeight - 2
+	rows := contentHeight - routineReportsHeaderLines - routineMatrixFixedLines
+	if rows < 1 {
+		return 1
+	}
+	return rows
+}
+
+func (a *App) clampRoutineReportScroll() {
+	maxScroll := len(a.routines) - a.routineReportVisibleRows()
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	a.routineReportScroll = max(0, min(a.routineReportScroll, maxScroll))
 }
 
 // migrateSelected carries the focused Overdue task onto today's list,
@@ -1460,12 +1653,11 @@ func (a *App) migrateSelected() {
 }
 
 func (a *App) toggleSelected() {
-	list := a.currentList()
-	sel := a.currentSelected()
-	if sel < 0 || sel >= len(list) {
+	selected := a.selectedTask()
+	if selected == nil {
 		return
 	}
-	id := list[sel].ID
+	id := selected.ID
 	for i := range a.tasks {
 		if a.tasks[i].ID == id {
 			a.tasks[i].Done = !a.tasks[i].Done
@@ -1483,12 +1675,11 @@ func (a *App) toggleSelected() {
 }
 
 func (a *App) toggleImportantSelected() {
-	list := a.currentList()
-	sel := a.currentSelected()
-	if sel < 0 || sel >= len(list) {
+	selected := a.selectedTask()
+	if selected == nil {
 		return
 	}
-	id := list[sel].ID
+	id := selected.ID
 	for i := range a.tasks {
 		if a.tasks[i].ID == id {
 			a.tasks[i].Important = !a.tasks[i].Important
@@ -1502,24 +1693,132 @@ func (a *App) toggleImportantSelected() {
 // saveSettings persists every user preference at once. Settings are written
 // as a whole struct, so saving one field from a freshly-built Settings{} would
 // blank the others — always send the full current state.
-func (a App) saveSettings() {
+func (a *App) saveSettings() error {
 	if a.noPersist {
-		return
+		return nil
 	}
-	_ = model.SaveSettings(model.Settings{
+	weekStart := a.weekStart
+	err := model.SaveSettings(model.Settings{
 		Theme:                     currentTheme().Name,
 		Layout:                    a.layout.String(),
+		Workdays:                  append([]time.Weekday(nil), a.workdays...),
+		WeekStart:                 &weekStart,
 		PomodoroFocusMinutes:      a.pomo.workMinutes,
 		PomodoroShortBreakMinutes: a.pomo.shortBreakMinutes,
 		PomodoroLongBreakMinutes:  a.pomo.longBreakMinutes,
 		PomodoroLongBreakEvery:    a.pomo.longBreakEvery,
 		PomodoroAutoStartNext:     a.pomo.autoStartNext,
 	})
+	if err != nil {
+		a.err = "failed to save settings: " + err.Error()
+	}
+	return err
+}
+
+// reconcileRoutineSnapshot reconciles a deep-enough copy for transactional
+// UI updates. Routine histories are maps, so copying only the slice would let
+// a failed save mutate the live App state through shared map references.
+func reconcileRoutineSnapshot(routines []model.Routine, today time.Time, workdays []time.Weekday) ([]model.Routine, bool, error) {
+	copyOf := append([]model.Routine(nil), routines...)
+	changed := false
+	for i := range copyOf {
+		if routines[i].History != nil {
+			copyOf[i].History = make(map[string]model.RoutineStatus, len(routines[i].History))
+			for date, status := range routines[i].History {
+				copyOf[i].History[date] = status
+			}
+		}
+		itemChanged, err := model.ReconcileRoutine(&copyOf[i], today, workdays)
+		if err != nil {
+			return nil, false, err
+		}
+		changed = changed || itemChanged
+	}
+	return copyOf, changed, nil
+}
+
+func sameWeekdaySet(a, b []time.Weekday) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	var inA, inB [7]bool
+	for _, day := range a {
+		if day < time.Sunday || day > time.Saturday {
+			return false
+		}
+		inA[day] = true
+	}
+	for _, day := range b {
+		if day < time.Sunday || day > time.Saturday {
+			return false
+		}
+		inB[day] = true
+	}
+	return inA == inB
+}
+
+// commitCalendar settles every routine using the old workday definition
+// before replacing it. Week-start changes affect report boundaries only and
+// deliberately do not rewrite routine history.
+func (a *App) commitCalendar(workdays []time.Weekday, weekStart time.Weekday) error {
+	start := weekStart
+	if err := (model.Settings{Workdays: workdays, WeekStart: &start}).ValidateCalendar(); err != nil {
+		return err
+	}
+
+	reconciled := a.routines
+	if !sameWeekdaySet(a.workdays, workdays) {
+		if a.routinesLoadErr != nil {
+			return fmt.Errorf("cannot change workdays: routines failed to load: %w", a.routinesLoadErr)
+		}
+		var err error
+		reconciled, _, err = reconcileRoutineSnapshot(a.routines, a.now(), a.workdays)
+		if err != nil {
+			return fmt.Errorf("reconcile routines: %w", err)
+		}
+	}
+
+	a.workdays = append([]time.Weekday(nil), workdays...)
+	a.weekStart = weekStart
+	a.routines = reconciled
+	a.routineReportScroll = 0
+	a.clampRoutineReportScroll()
+	return nil
+}
+
+func (a *App) persistCalendarCommit(oldWorkdays []time.Weekday, oldWeekStart time.Weekday, oldRoutines []model.Routine) error {
+	if a.noPersist {
+		return nil
+	}
+	if !reflect.DeepEqual(oldRoutines, a.routines) {
+		if err := model.SaveRoutines(a.routines); err != nil {
+			a.workdays = oldWorkdays
+			a.weekStart = oldWeekStart
+			a.routines = oldRoutines
+			return fmt.Errorf("save reconciled routines: %w", err)
+		}
+	}
+	if err := a.saveSettings(); err != nil {
+		// Keep the runtime consistent with the persisted old settings. Routine
+		// reconciliation is safe to retain on disk: it used those same old
+		// workdays and only closes dates through yesterday.
+		a.workdays = oldWorkdays
+		a.weekStart = oldWeekStart
+		return err
+	}
+	return nil
 }
 
 // selectedTask returns the task under the cursor in the focused pane, or nil
 // when the pane is empty (or the selection is somehow out of range).
 func (a *App) selectedTask() *model.Task {
+	if a.focus == focusToday {
+		entries := a.todayEntries()
+		if a.todaySelected < 0 || a.todaySelected >= len(entries) || entries[a.todaySelected].routine != nil {
+			return nil
+		}
+		return &entries[a.todaySelected].task
+	}
 	list := a.currentList()
 	sel := a.currentSelected()
 	if sel < 0 || sel >= len(list) {
@@ -1539,6 +1838,9 @@ func (a *App) selectedItemID() string {
 		entry := entries[a.simpleSelected]
 		if entry.isNote {
 			return "note:" + entry.note.ID
+		}
+		if entry.isRoutine {
+			return "routine:" + entry.routine.ID
 		}
 		return "task:" + entry.task.ID
 	}
@@ -1560,6 +1862,16 @@ func (a *App) selectedItemID() string {
 func (a App) updateConfirmDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y", "enter":
+		if a.deleteReturn == modeRoutineManager {
+			if a.deleteItemID != a.managerSelectedID() {
+				a.status = "Routine list changed; delete cancelled"
+			} else {
+				a.deleteRoutine(a.deleteItemID)
+			}
+			a.deleteItemID = ""
+			a.mode = modeRoutineManager
+			return a, nil
+		}
 		if a.deleteItemID != "" && a.selectedItemID() != a.deleteItemID {
 			a.mode = modeNormal
 			a.deleteItemID = ""
@@ -1579,7 +1891,7 @@ func (a App) updateConfirmDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.clampSelections()
 		return a, nil
 	default:
-		a.mode = modeNormal
+		a.mode = a.deleteReturn
 		a.deleteItemID = ""
 		a.status = "Delete cancelled"
 		return a, nil
@@ -1587,12 +1899,12 @@ func (a App) updateConfirmDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (a *App) deleteSelected() {
-	list := a.currentList()
-	sel := a.currentSelected()
-	if sel < 0 || sel >= len(list) {
+	selected := a.selectedTask()
+	if selected == nil {
 		return
 	}
-	id := list[sel].ID
+	id := selected.ID
+	sel := a.currentSelected()
 	filtered := a.tasks[:0]
 	for _, t := range a.tasks {
 		if t.ID != id {
@@ -1602,6 +1914,9 @@ func (a *App) deleteSelected() {
 	a.tasks = filtered
 
 	newLen := len(a.currentList())
+	if a.focus == focusToday {
+		newLen = len(a.todayEntries())
+	}
 	if sel >= newLen {
 		sel = newLen - 1
 	}
@@ -1764,19 +2079,27 @@ func (a App) overdueTasks() []model.Task {
 }
 
 func (a App) helpGroups() []helpGroup {
+	if a.mode == modeRoutineManager || a.mode == modeRoutineEditor {
+		return nil
+	}
 	if a.simple && a.mode == modeNormal {
 		what := "task"
 		if a.simpleNoteMode {
 			what = "note"
 		}
-		return []helpGroup{
-			{"", []helpKey{
-				{"a", "add " + what}, {"tab", "switch to " + map[bool]string{true: "task", false: "note"}[a.simpleNoteMode]},
-				{"space", "toggle"}, {"enter", "edit"}, {"d", "delete"}, {"i", "important"},
-				{"C", a.upcomingSwitchLabel()}, {"I/U", "filters"},
-				{"↑/↓ j/k", "navigate"}, {"S", "settings"}, {"q", "quit"},
-			}},
+		keys := []helpKey{
+			{"a", "add " + what}, {"tab", "switch to " + map[bool]string{true: "task", false: "note"}[a.simpleNoteMode]},
 		}
+		entries := a.simpleEntries()
+		if a.simpleSelected >= 0 && a.simpleSelected < len(entries) && entries[a.simpleSelected].isRoutine {
+			keys = append(keys, helpKey{"space/enter", "toggle routine"}, helpKey{"s", "skip routine"})
+		} else if a.simpleSelected >= 0 && a.simpleSelected < len(entries) && entries[a.simpleSelected].isNote {
+			keys = append(keys, helpKey{"enter", "edit"}, helpKey{"d", "delete"})
+		} else {
+			keys = append(keys, helpKey{"space", "toggle"}, helpKey{"enter", "edit"}, helpKey{"d", "delete"}, helpKey{"i", "important"})
+		}
+		keys = append(keys, helpKey{"C", a.upcomingSwitchLabel()}, helpKey{"I/U", "filters"}, helpKey{"↑/↓ j/k", "navigate"}, helpKey{"R", "routines"}, helpKey{"S", "settings"}, helpKey{"q", "quit"})
+		return []helpGroup{{"", keys}}
 	}
 
 	// While a confirmation is up the help bar is emptied rather than
@@ -1830,20 +2153,21 @@ func (a App) helpGroups() []helpGroup {
 			{"Notes", notesKeys},
 			{"View", viewKeys},
 			{"App", []helpKey{
-				{"S", "settings"}, {"q", "quit"},
+				{"R", "routines"}, {"S", "settings"}, {"q", "quit"},
 			}},
 		}
 	}
 	if a.focus == focusReports {
-		// The Reports pane has no list and no items, so none of the task or
-		// note bindings apply — only chart navigation and the app-wide keys.
+		chartKeys := []helpKey{{"←/→ h/l", "switch chart"}}
+		if a.reportChart == chartRoutines {
+			chartKeys = append(chartKeys, helpKey{"↑/↓ j/k", "scroll routines"})
+		}
+		chartKeys = append(chartKeys, helpKey{"", a.reportChart.String()})
 		return []helpGroup{
-			{"Chart", []helpKey{
-				{"←/→ h/l", "switch chart"}, {"", a.reportChart.String()},
-			}},
+			{"Chart", chartKeys},
 			{"View", []helpKey{{"tab", "switch pane"}}},
 			{"App", []helpKey{
-				{"S", "settings"}, {"q", "quit"},
+				{"R", "routines"}, {"S", "settings"}, {"q", "quit"},
 			}},
 		}
 	}
@@ -1858,11 +2182,14 @@ func (a App) helpGroups() []helpGroup {
 	var taskKeys []helpKey
 	if a.focus == focusOverdue {
 		taskKeys = []helpKey{{"space", "move to today"}}
+	} else if a.selectedTodayRoutine() != nil {
+		taskKeys = []helpKey{{"space/enter", "toggle routine"}, {"s", "skip routine"}}
 	} else {
 		taskKeys = []helpKey{{"a", "add"}, {"space", "done"}, {"enter", "edit"}}
 	}
-	taskKeys = append(taskKeys,
-		helpKey{"d", "delete"}, helpKey{"i", "important"})
+	if a.selectedTodayRoutine() == nil {
+		taskKeys = append(taskKeys, helpKey{"d", "delete"}, helpKey{"i", "important"})
+	}
 
 	viewKeys := []helpKey{{"tab", "switch pane"}, {"↑/↓ j/k", "navigate"}}
 	if a.focus == focusToday {
@@ -1876,7 +2203,7 @@ func (a App) helpGroups() []helpGroup {
 		// Pomodoro's keys aren't listed here — they're rendered inside the
 		// Pomodoro pane itself, next to the thing they control.
 		{"App", []helpKey{
-			{"S", "settings"}, {"q", "quit"},
+			{"R", "routines"}, {"S", "settings"}, {"q", "quit"},
 		}},
 	}
 }
@@ -1921,6 +2248,9 @@ func (a App) visibleRowsFor(focus focusedPane) int {
 		// The normal Today pane has a fixed view-selector row above its list.
 		// Reserve it so switching views does not change the task viewport.
 		contentHeight -= todayTabsHeight
+		if !a.upcoming && len(a.dueRoutines()) > 0 {
+			contentHeight -= 2
+		}
 	}
 	//
 	// renderTaskList always emits a scroll-indicator line (blank when there's
@@ -1964,6 +2294,9 @@ func (a App) View() string {
 	if a.mode == modeSettings {
 		page = overlayModal(page, a.renderSettingsModal(), a.width, a.height)
 	}
+	if a.mode == modeRoutineManager || a.mode == modeRoutineEditor || (a.mode == modeConfirmDelete && a.deleteReturn == modeRoutineManager) {
+		page = overlayModal(page, a.renderRoutineModal(), a.width, a.height)
+	}
 	if a.shortcutsOpen {
 		return overlayModal(page, a.renderShortcutsModal(), a.width, a.height)
 	}
@@ -2001,7 +2334,7 @@ func (a App) renderPage() string {
 
 			today := a.activeDayTasks()
 			todayVisible := a.visibleRowsFor(focusToday)
-			todayBody := renderTaskList(today, a.todaySelected, a.todayScroll, todayVisible, a.focus == focusToday, false, leftWidth-4, a.now(), a.upcoming)
+			todayBody := a.renderTodayList(todayVisible, leftWidth-4)
 			todayBody = renderTodayTabs(a.upcoming, leftWidth-4) + "\n" + todayBody
 			if a.mode == modeAdding {
 				a.input.TextStyle = lipgloss.NewStyle().Foreground(colorText).Background(colorPaneBg)
@@ -2024,7 +2357,11 @@ func (a App) renderPage() string {
 				}
 				todayBody += "\n" + inputLine
 			}
-			todayPane := renderPane(fmt.Sprintf("Tasks (%d)%s", len(today), filters), todayBody, a.focus == focusToday, leftWidth, todayHeight)
+			title := fmt.Sprintf("%s (%d)%s", a.activeDayTitle(), len(today), filters)
+			if !a.upcoming {
+				title = fmt.Sprintf("Today (%d tasks · %d routines)%s", len(today), len(a.dueRoutines()), filters)
+			}
+			todayPane := renderPane(title, todayBody, a.focus == focusToday, leftWidth, todayHeight)
 
 			overdue := a.overdueTasks()
 			overdueWidth := leftWidth
@@ -2046,7 +2383,8 @@ func (a App) renderPage() string {
 			greetPane := renderPane("", greetBody, false, greetWidth, g.greetHeight)
 
 			report := stats.Compute(a.tasks, a.now())
-			reportsBody := renderReports(report, reportsWidth-4, g.reportsHeight-2, a.reportChart, a.focus == focusReports)
+			routineReport := stats.ComputeRoutineWeek(a.routines, a.now(), a.weekStart, a.workdays)
+			reportsBody := renderReports(report, routineReport, a.routines, reportsWidth-4, g.reportsHeight-2, a.reportChart, a.focus == focusReports, a.routineReportScroll)
 			reportsPane := renderPane("Reports", reportsBody, a.focus == focusReports, reportsWidth, g.reportsHeight)
 
 			pomoBody := renderPomodoro(a.pomo, pomoWidth-4, g.pomoHeight-2)
@@ -2106,12 +2444,16 @@ func (a App) assemblePage(body, helpLine string) string {
 		// The confirmation takes over the status line so it's impossible to
 		// miss, and names the item so there's no doubt about what's going.
 		prompt := "Delete this task?"
-		if a.simple {
+		if a.deleteReturn == modeRoutineManager {
+			prompt = fmt.Sprintf("Delete routine %q and its history?", a.managerSelectedTitle())
+		} else if a.simple {
 			entries := a.simpleEntries()
 			if a.simpleSelected >= 0 && a.simpleSelected < len(entries) {
 				e := entries[a.simpleSelected]
 				if e.isNote {
 					prompt = fmt.Sprintf("Delete %q?", strings.SplitN(e.note.Body, "\n", 2)[0])
+				} else if e.isRoutine {
+					prompt = fmt.Sprintf("Delete routine %q?", e.routine.Title)
 				} else {
 					prompt = fmt.Sprintf("Delete %q?", e.task.Title)
 				}

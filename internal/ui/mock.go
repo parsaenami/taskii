@@ -204,3 +204,15 @@ func mockNotes() []model.Note {
 	}
 	return notes
 }
+
+// mockRoutines demonstrates all recurrence types without touching XDG data.
+func mockRoutines(now time.Time) []model.Routine {
+	day := now.Format(dateFormat)
+	created := now.AddDate(0, 0, -8)
+	days := []time.Weekday{now.Weekday(), time.Weekday((int(now.Weekday()) + 2) % 7)}
+	return []model.Routine{
+		{ID: "mock-coffee", Title: "Make coffee", CreatedAt: created, Schedule: model.ScheduleEveryDay, History: map[string]model.RoutineStatus{day: model.RoutineCompleted}},
+		{ID: "mock-email", Title: "Check email and Slack", CreatedAt: created, Schedule: model.ScheduleWorkdays},
+		{ID: "mock-sentry", Title: "Review Sentry alerts", CreatedAt: created, Schedule: model.ScheduleCustom, CustomWeekdays: days, History: map[string]model.RoutineStatus{day: model.RoutineSkipped}},
+	}
+}

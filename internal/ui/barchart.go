@@ -16,18 +16,20 @@ const (
 	chartWeek reportChart = iota
 	chartMonth
 	chartContribution
+	chartRoutines
 )
 
 var reportChartNames = map[reportChart]string{
-	chartWeek:         "Week",
+	chartWeek:         "7 Days",
 	chartMonth:        "Month",
 	chartContribution: "Contribution",
+	chartRoutines:     "Routines",
 }
 
 func (c reportChart) String() string { return reportChartNames[c] }
 
 func (c reportChart) next() reportChart {
-	if c >= chartContribution {
+	if c >= chartRoutines {
 		return chartWeek
 	}
 	return c + 1
@@ -35,7 +37,7 @@ func (c reportChart) next() reportChart {
 
 func (c reportChart) prev() reportChart {
 	if c <= chartWeek {
-		return chartContribution
+		return chartRoutines
 	}
 	return c - 1
 }
@@ -178,7 +180,7 @@ func renderBarChart(bars []stats.DayBar, width, height int, labelEvery int) stri
 		}
 		text := fmt.Sprintf("%d", b.Date.Day())
 		if labelEvery == 1 {
-			// Week view: weekday initial fits a narrow column.
+			// 7 Days view: weekday initial fits a narrow column.
 			text = b.Date.Format("Mon")[:1]
 		}
 		at := i * perCol
