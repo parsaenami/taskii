@@ -173,3 +173,72 @@ func renderGreeting(now time.Time, username string, width, height int) string {
 
 	return strings.Join(lines, "\n")
 }
+
+// renderHeader is the borderless, horizontal greeting used by the header-based
+// layouts. Unlike renderGreeting its entire surface (including padding) is the
+// page background. Fit plain text before styling and concatenate final spans;
+// re-rendering ANSI content would lose backgrounds after embedded resets.
+func renderHeader(now time.Time, username string, width, height int, rightAligned bool) string {
+	if width <= 0 || height <= 0 {
+		return ""
+	}
+	// The borderless header owns one page-background cell at each edge.
+	// Remove them from the fitting budget before laying out logo and metadata.
+	outerWidth := width
+	width = max(0, width-2)
+	greeting := timeGreeting(now)
+	if username != "" {
+		greeting += ", " + username
+	}
+	metadata := []string{greeting, now.Format("Monday, January 2, 2006"), "v" + CurrentVersion()}
+	metadataWidth := 0
+	for _, line := range metadata {
+		metadataWidth = max(metadataWidth, lipgloss.Width(line))
+	}
+
+	logo := taskiiBanner
+	logoWidth := lipgloss.Width(logo[0])
+	if width < logoWidth+2+metadataWidth || height < len(logo) {
+		// Preserve readable metadata rather than slicing the approved glyphs.
+		logo = []string{"", "TASKII", ""}
+		logoWidth = min(width, lipgloss.Width("TASKII"))
+	}
+	gap := min(2, max(0, width-logoWidth))
+	metadataWidth = min(metadataWidth, max(0, width-logoWidth-gap))
+	if rightAligned {
+		gap = width - logoWidth - metadataWidth
+	}
+
+	blank := lipgloss.NewStyle().Background(colorBg)
+	logoStyle := lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Background(colorBg)
+	textStyle := lipgloss.NewStyle().Foreground(colorMuted).Background(colorBg)
+	rows := make([]string, height)
+	for i := range rows {
+		rows[i] = spacerRow(width)
+	}
+	contentHeight := min(3, height)
+	top := (height - contentHeight) / 2
+	for i := 0; i < contentHeight; i++ {
+		logoLine := logo[i]
+		if contentHeight == 1 {
+			logoLine = "TASKII"
+		}
+		line := logoStyle.Render(fitToWidth(logoLine, logoWidth)) + blank.Render(strings.Repeat(" ", gap))
+		if metadataWidth > 0 {
+			text := fitToWidth(metadata[i], metadataWidth)
+			if rightAligned {
+				// fitToWidth pads on the right; move that padding to the left so
+				// every metadata line ends at the full-width header's far edge.
+				text = strings.TrimRight(text, " ")
+				text = strings.Repeat(" ", metadataWidth-lipgloss.Width(text)) + text
+			}
+			line += textStyle.Render(text)
+		}
+		rows[top+i] = padPanelLine(line, width, colorBg)
+	}
+	margin := blank.Render(" ")
+	for i, row := range rows {
+		rows[i] = padPanelLine(margin+row+margin, outerWidth, colorBg)
+	}
+	return strings.Join(rows, "\n")
+}

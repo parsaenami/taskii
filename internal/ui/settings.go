@@ -79,7 +79,7 @@ var settingsFields = []settingsField{
 // allLayouts is the ordered list the Layout section navigates. Kept explicit
 // rather than derived from the layoutNames map so the order on screen is
 // stable (Go map iteration order is not).
-var allLayouts = []layout{layoutTasksLeft, layoutTasksRight, layoutStacked, layoutThreeColumn}
+var allLayouts = []layout{layoutTasksLeft, layoutTasksRight, layoutStacked, layoutThreeColumn, layoutDashboardGrid, layoutHeaderColumns}
 
 // settingsModal is a scratch copy of every setting it edits, so Esc can
 // discard in-progress changes without touching the live App state (the

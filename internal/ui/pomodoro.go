@@ -436,3 +436,173 @@ func renderPomodoro(p pomodoro, width, height int) string {
 
 	return strings.Join(append(lines, keys), "\n")
 }
+
+// renderHorizontalPomodoro is Layout 5's clock | bar | context
+// block. Narrow panes shorten the context before yielding the bar, keeping the
+// clock and controls together without changing the vertical/compact renderers.
+func renderHorizontalPomodoro(p pomodoro, width, height int) string {
+	if width <= 0 || height <= 0 {
+		return ""
+	}
+	digits := bigTimerRows(formatMMSS(p.remaining))
+	if len(digits) == 0 || height < 3 || lipgloss.Width(digits[0]) > width {
+		return renderCompactPomodoro(p, width, height)
+	}
+	clockWidth := lipgloss.Width(digits[0])
+	color := p.phaseColor()
+	timerStyle := lipgloss.NewStyle().Bold(true).Foreground(color).Background(colorPaneBg)
+	blank := lipgloss.NewStyle().Background(colorPaneBg)
+	pipColor := colorMuted
+	if p.running {
+		pipColor = color
+	}
+	phase := lipgloss.NewStyle().Foreground(pipColor).Background(colorPaneBg).Render("● ") +
+		timerStyle.Render(p.phaseName())
+	context := []string{phase, sessionSummary(p), "", renderPomodoroKeys(0)}
+	contextWidth := lipgloss.Width(strings.Join(context, "\n"))
+	barWidth := width - clockWidth - 4 - contextWidth
+	if barWidth < 5 {
+		// Keep the full phase and all three keys; shorten the break wording,
+		// preserving whether it is next or already in progress.
+		contextWidth = max(lipgloss.Width(phase), lipgloss.Width(fmt.Sprintf("Sessions %d · Short next", p.completed)))
+		if width-clockWidth-4-contextWidth < 5 {
+			contextWidth = max(0, width-clockWidth-2)
+		}
+		context[1] = horizontalSessionSummary(p, contextWidth)
+		context[3] = renderPomodoroKeys(contextWidth)
+		barWidth = width - clockWidth - 4 - contextWidth
+	}
+	if height == 3 {
+		// Short headers combine phase and session context, keeping a blank
+		// row before the controls without sacrificing any clock glyphs.
+		label, shortLabel, labelColor := "Short next", "S→", colorMuted
+		if p.nextBreakIsLong() {
+			label, shortLabel, labelColor = "Long next", "L→", colorGreen
+		}
+		if p.phase != phaseWork {
+			label, shortLabel = "Short break", "S"
+			if p.phase == phaseLongBreak {
+				label, shortLabel = "Long break", "L"
+			}
+		}
+		count := fmt.Sprintf(" %d ", p.completed)
+		if lipgloss.Width(phase)+lipgloss.Width(count+label) > contextWidth {
+			label = shortLabel
+		}
+		phaseWidth := max(0, contextWidth-lipgloss.Width(count+label))
+		compactPhase := padPanelLine(phase, min(lipgloss.Width(phase), phaseWidth), colorPaneBg)
+		context = []string{
+			compactPhase + statLabelStyle.Render(count) +
+				lipgloss.NewStyle().Foreground(labelColor).Background(colorPaneBg).Render(label),
+			"", renderPomodoroKeys(contextWidth),
+		}
+	}
+	pct := max(0, min(1, 1-float64(p.remaining)/float64(p.phaseDuration())))
+	lines := make([]string, max(len(digits), len(context)))
+	for i := range lines {
+		line := blank.Render(strings.Repeat(" ", clockWidth))
+		if i < len(digits) {
+			line = timerStyle.Render(digits[i])
+		}
+		if barWidth >= 5 {
+			line += blank.Render("  ")
+			if i == 1 {
+				line += renderGradientBar(pct*100, barWidth, color)
+			} else {
+				line += blank.Render(strings.Repeat(" ", barWidth))
+			}
+		}
+		if contextWidth > 0 {
+			line += blank.Render("  ") + padPanelLine(context[i], contextWidth, colorPaneBg)
+		}
+		lines[i] = padPanelLine(line, width, colorPaneBg)
+	}
+	// With no room beside the clock, use extra rows for context when available.
+	if contextWidth == 0 {
+		lines = lines[:len(digits)]
+		for i := 0; i < min(len(context), height-len(digits)); i++ {
+			lines = append(lines, padPanelLine(context[i], width, colorPaneBg))
+		}
+	}
+	top := (height - len(lines) + 1) / 2
+	rows := make([]string, height)
+	for i := range rows {
+		rows[i] = blank.Render(strings.Repeat(" ", width))
+	}
+	copy(rows[top:], lines)
+	if top > 0 && contextWidth > 0 {
+		// Lift only the phase into the spare row, retaining the clock, bar,
+		// session summary, spacer, and controls at their existing positions.
+		contextCol := clockWidth + 2
+		if barWidth >= 5 {
+			contextCol += barWidth + 2
+		}
+		rows[top-1] = padPanelLine(blank.Render(strings.Repeat(" ", contextCol))+
+			padPanelLine(phase, contextWidth, colorPaneBg), width, colorPaneBg)
+		rows[top] = padPanelLine(truncateANSI(rows[top], contextCol), width, colorPaneBg)
+	}
+	return strings.Join(rows, "\n")
+}
+
+func horizontalSessionSummary(p pomodoro, width int) string {
+	label, color := "Short next", colorMuted
+	if p.nextBreakIsLong() {
+		label, color = "Long next", colorGreen
+	}
+	if p.phase != phaseWork {
+		label = "Short break"
+		if p.phase == phaseLongBreak {
+			label = "Long break"
+		}
+	}
+	count := fmt.Sprintf("Sessions %d", p.completed)
+	if lipgloss.Width(count+" · "+label) > width {
+		count = fmt.Sprint(p.completed)
+	}
+	separator := " · "
+	if lipgloss.Width(count+separator+label) > width {
+		separator = " "
+	}
+	return statLabelStyle.Render(count+separator) +
+		lipgloss.NewStyle().Foreground(color).Background(colorPaneBg).Render(label)
+}
+
+// renderCompactPomodoro shares timer state and controls with the full pane,
+// but fits short Layout 6 panes. The hint row stays pinned even when constrained.
+func renderCompactPomodoro(p pomodoro, width, height int) string {
+	if width <= 0 || height <= 0 {
+		return ""
+	}
+	color := p.phaseColor()
+	pipColor := colorMuted
+	if p.running {
+		pipColor = color
+	}
+	timerText := formatMMSS(p.remaining)
+	phaseWidth := min(lipgloss.Width(p.phaseName()), max(0, width-lipgloss.Width(timerText)-3))
+	timerStyle := lipgloss.NewStyle().Bold(true).Foreground(color).Background(colorPaneBg)
+	header := lipgloss.NewStyle().Foreground(pipColor).Background(colorPaneBg).Render("● ") +
+		timerStyle.Render(fitToWidth(p.phaseName(), phaseWidth)+" "+timerText)
+	if width < lipgloss.Width(timerText)+3 {
+		header = timerStyle.Render(timerText)
+	}
+	pct := 1 - float64(p.remaining)/float64(p.phaseDuration())
+	pct = max(0, min(1, pct))
+	lines := []string{header, renderGradientBar(pct*100, width, color), sessionSummary(p)}
+	if height < 4 {
+		// Countdown first, then session context; the redundant bar yields.
+		lines = []string{header, sessionSummary(p)}
+	}
+	lines = lines[:min(len(lines), max(0, height-1))]
+	for len(lines) < height-1 {
+		lines = append(lines, "")
+	}
+	lines = append(lines, renderPomodoroKeys(width))
+	for i, line := range lines {
+		if lipgloss.Width(line) > width {
+			line = truncateANSI(line, width)
+		}
+		lines[i] = centerLine(line, width)
+	}
+	return strings.Join(lines, "\n")
+}

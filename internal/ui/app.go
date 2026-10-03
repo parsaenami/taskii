@@ -2430,22 +2430,38 @@ func (a App) renderPage() string {
 			tasks := lipgloss.JoinVertical(lipgloss.Left, todayPane, overduePane)
 			if a.layout == layoutStacked {
 				tasks = lipgloss.JoinHorizontal(lipgloss.Top, todayPane, overduePane)
+			} else if a.layout == layoutHeaderColumns {
+				tasks = joinPaneRows(todayPane, overduePane, leftWidth, g.rowGap)
 			}
 
 			greetWidth, reportsWidth, pomoWidth := rightWidth, rightWidth, rightWidth
 			if a.layout == layoutStacked {
 				pomoWidth = a.width - greetWidth - reportsWidth
+			} else if a.layout == layoutDashboardGrid {
+				pomoWidth = g.taskWidth
 			}
 
-			greetBody := renderGreeting(a.now(), a.username, greetWidth-4, g.greetHeight-2)
-			greetPane := renderPane("", greetBody, false, greetWidth, g.greetHeight)
+			var greetPane string
+			if g.headerHeight > 0 {
+				greetPane = renderHeader(a.now(), a.username, g.headerWidth, g.headerHeight, a.layout == layoutHeaderColumns)
+			} else {
+				greetBody := renderGreeting(a.now(), a.username, greetWidth-4, g.greetHeight-2)
+				greetPane = renderPane("", greetBody, false, greetWidth, g.greetHeight)
+			}
 
 			report := stats.Compute(a.tasks, a.now())
 			routineReport := stats.ComputeRoutineWeek(a.routines, a.now(), a.weekStart, a.workdays)
 			reportsBody := renderReports(report, routineReport, a.routines, reportsWidth-4, g.reportsHeight-2, a.reportChart, a.focus == focusReports, a.routineReportScroll)
 			reportsPane := renderPane("Reports", reportsBody, a.focus == focusReports, reportsWidth, g.reportsHeight)
 
-			pomoBody := renderPomodoro(a.pomo, pomoWidth-4, g.pomoHeight-2)
+			var pomoBody string
+			if a.layout == layoutDashboardGrid {
+				pomoBody = renderHorizontalPomodoro(a.pomo, pomoWidth-4, g.pomoHeight-2)
+			} else if a.layout == layoutHeaderColumns && g.pomoHeight < pomoMinContentLines+2 {
+				pomoBody = renderCompactPomodoro(a.pomo, pomoWidth-4, g.pomoHeight-2)
+			} else {
+				pomoBody = renderPomodoro(a.pomo, pomoWidth-4, g.pomoHeight-2)
+			}
 			pomoPane := renderPane("Pomodoro", pomoBody, false, pomoWidth, g.pomoHeight)
 
 			notesPane := a.renderNotesPane(g)
@@ -2472,6 +2488,16 @@ func (a App) renderPage() string {
 			case layoutThreeColumn:
 				info := lipgloss.JoinVertical(lipgloss.Left, infoPanes...)
 				body = lipgloss.JoinHorizontal(lipgloss.Top, info, gutter, tasks, gutter, notesPane)
+			case layoutDashboardGrid:
+				header := lipgloss.JoinHorizontal(lipgloss.Top, greetPane, gutterColumn(g.headerHeight), pomoPane)
+				middle := lipgloss.JoinHorizontal(lipgloss.Top, reportsPane, gutterColumn(g.todayHeight), todayPane)
+				bottom := lipgloss.JoinHorizontal(lipgloss.Top, notesPane, gutterColumn(g.overdueHeight), overduePane)
+				grid := joinPaneRows(middle, bottom, a.width, g.rowGap)
+				body = joinPaneRows(header, grid, a.width, g.headerGap)
+			case layoutHeaderColumns:
+				info := joinPaneRows(reportsPane, pomoPane, reportsWidth, g.rowGap)
+				columns := lipgloss.JoinHorizontal(lipgloss.Top, info, gutter, tasks, gutter, notesPane)
+				body = joinPaneRows(greetPane, columns, a.width, g.headerGap)
 			default:
 				info := lipgloss.JoinVertical(lipgloss.Left, infoPanes...)
 				body = lipgloss.JoinHorizontal(lipgloss.Top, tasks, gutter, info)

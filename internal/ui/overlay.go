@@ -189,12 +189,19 @@ func ansiSlice(s string, start, end int) string {
 		}
 		r, size := utf8.DecodeRuneInString(s[i:])
 		rw := runewidth.RuneWidth(r)
-		if col >= start && col < end {
+		if col+rw > start && col < end {
 			if !wroteAny && lastSGR != "" {
 				b.WriteString(lastSGR)
 			}
 			wroteAny = true
-			b.WriteString(s[i : i+size])
+			if col >= start && col+rw <= end {
+				b.WriteString(s[i : i+size])
+			} else {
+				// A modal edge can bisect a wide glyph. Keep the intersecting
+				// cells as styled blanks rather than dropping a cell (or drawing
+				// the full glyph across the overlay's boundary).
+				b.WriteString(strings.Repeat(" ", min(col+rw, end)-max(col, start)))
+			}
 		}
 		col += rw
 		i += size
@@ -210,7 +217,7 @@ func ansiSlice(s string, start, end int) string {
 		if lastSGR != "" {
 			b.WriteString(lastSGR)
 		}
-		b.WriteString(strings.Repeat(" ", end-col))
+		b.WriteString(strings.Repeat(" ", end-max(col, start)))
 	}
 
 	if wroteAny || col < end {

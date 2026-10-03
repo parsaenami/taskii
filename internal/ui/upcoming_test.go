@@ -207,7 +207,7 @@ func TestUpcomingDateRenderingAndDimensions(t *testing.T) {
 		}
 	}
 	for _, simple := range []bool{false, true} {
-		for _, lay := range []layout{layoutTasksLeft, layoutTasksRight, layoutStacked, layoutThreeColumn} {
+		for _, lay := range allLayouts {
 			for _, size := range [][2]int{{100, 30}, {160, 45}} {
 				t.Run(fmt.Sprintf("simple=%v/%s/%dx%d", simple, lay, size[0], size[1]), func(t *testing.T) {
 					a := upcomingTestApp()
