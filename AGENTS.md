@@ -2,6 +2,31 @@
 
 Decision log for the `terminal-dashboard` project. Updated after every step/change.
 
+## Linux AppImage releases (2026-10-03)
+
+Implemented issue #9 with Linux amd64 and arm64 AppImages alongside existing
+release archives. The AppDir includes a terminal desktop entry, the existing
+logo and license, and an AppRun launcher that preserves the working directory
+and forwards CLI arguments. Packaging pins appimagetool 1.9.1 and type2-runtime
+20251108, embeds architecture-specific GitHub Releases update information, and
+requires a matching `.AppImage.zsync` asset. A clean staging directory handles
+appimagetool writing its zsync sidecar into the working directory and prevents
+stale sidecars from hiding failures.
+
+Linux ARM64 uses a native GitHub runner. Both Linux release jobs check embedded
+update metadata and run version/help smoke checks without FUSE before uploading
+assets. CI also checks shell syntax and exercises both architecture mappings,
+desktop metadata, argument forwarding, working-directory preservation, and
+missing-sidecar failure. README documents launch, FUSE-free execution, XDG data,
+and external AppImage update tools.
+
+Validation: project verification (build, vet, formatting, all Go tests), shell
+packaging tests, desktop-file validation, workflow YAML parsing, and
+`git diff --check` passed. A real amd64 AppImage and zsync file were built;
+embedded update metadata, `--version`, and `--help` were verified. Native ARM64
+execution and actual release publication remain covered by the tagged release
+workflow rather than this x86-64 environment.
+
 ## Project summary
 
 Full-screen terminal task manager / dashboard. Sections:

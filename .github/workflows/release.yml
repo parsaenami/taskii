@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner || 'ubuntu-latest' }}
     strategy:
       matrix:
         include:
@@ -18,6 +18,7 @@ jobs:
             goarch: amd64
           - goos: linux
             goarch: arm64
+            runner: ubuntu-24.04-arm
           - goos: darwin
             goarch: amd64
           - goos: darwin
@@ -46,12 +47,46 @@ jobs:
           else
             (cd dist && tar -czf "taskii-${GOOS}-${GOARCH}.tar.gz" "taskii-${GOOS}-${GOARCH}${ext}")
           fi
+      - name: Package Linux AppImage
+        if: matrix.goos == 'linux'
+        env:
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y desktop-file-utils zsync
+          case "$GOARCH" in
+            amd64) arch=x86_64 ;;
+            arm64) arch=aarch64 ;;
+          esac
+          # Pin both pieces; appimagetool otherwise downloads the latest runtime.
+          export APPIMAGETOOL="$RUNNER_TEMP/appimagetool.AppImage"
+          export APPIMAGE_RUNTIME="$RUNNER_TEMP/runtime-$arch"
+          curl --fail --location --retry 3 --output "$APPIMAGETOOL" \
+            "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-$arch.AppImage"
+          curl --fail --location --retry 3 --output "$APPIMAGE_RUNTIME" \
+            "https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-$arch"
+          chmod +x "$APPIMAGETOOL"
+          bash scripts/build-appimage.sh "dist/taskii-linux-$GOARCH" "$GOARCH" "$GITHUB_REF_NAME" dist
+      - name: Verify Linux AppImage
+        if: matrix.goos == 'linux'
+        env:
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          image="$PWD/dist/taskii-linux-$GOARCH.AppImage"
+          expected="gh-releases-zsync|parsaenami|taskii|latest|taskii-linux-$GOARCH.AppImage.zsync"
+          test "$("$image" --appimage-updateinformation)" = "$expected"
+          # Extraction is also the documented FUSE-free launch path.
+          test "$("$image" --appimage-extract-and-run --version)" = "taskii ${GITHUB_REF_NAME#v}"
+          "$image" --appimage-extract-and-run --help
+          test -s "$image.zsync"
       - uses: actions/upload-artifact@v4
         with:
           name: taskii-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
             dist/*.tar.gz
             dist/*.zip
+            dist/*.AppImage
+            dist/*.AppImage.zsync
 
   publish:
     needs: release
