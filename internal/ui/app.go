@@ -2524,13 +2524,11 @@ func (a App) assemblePage(body, helpLine string) string {
 			Render(fmt.Sprintf("Clear all %d notes?", len(a.notes))) +
 			confirmHint()
 
-	case a.mode == modeConfirmDelete:
+	case a.mode == modeConfirmDelete && a.deleteReturn != modeRoutineManager:
 		// The confirmation takes over the status line so it's impossible to
 		// miss, and names the item so there's no doubt about what's going.
 		prompt := "Delete this task?"
-		if a.deleteReturn == modeRoutineManager {
-			prompt = fmt.Sprintf("Delete routine %q and its history?", a.managerSelectedTitle())
-		} else if a.simple {
+		if a.simple {
 			entries := a.simpleEntries()
 			if a.simpleSelected >= 0 && a.simpleSelected < len(entries) {
 				e := entries[a.simpleSelected]

@@ -29,6 +29,14 @@ func routineKey(a App, key string) App {
 		msg = tea.KeyMsg{Type: tea.KeyUp}
 	case "right":
 		msg = tea.KeyMsg{Type: tea.KeyRight}
+	case "left":
+		msg = tea.KeyMsg{Type: tea.KeyLeft}
+	case "home":
+		msg = tea.KeyMsg{Type: tea.KeyHome}
+	case "end":
+		msg = tea.KeyMsg{Type: tea.KeyEnd}
+	case "shift+tab":
+		msg = tea.KeyMsg{Type: tea.KeyShiftTab}
 	case "ctrl+s":
 		msg = tea.KeyMsg{Type: tea.KeyCtrlS}
 	default:
@@ -429,6 +437,269 @@ func TestRoutineEditorTitleCursorUsesArrowKeys(t *testing.T) {
 	a = routineKey(a, "X")
 	if got := a.routineUI.title.Value(); got != "CoffeXe" {
 		t.Fatalf("typing at moved cursor = %q", got)
+	}
+}
+
+func routineCursorTrueColor(t *testing.T) {
+	t.Helper()
+	oldProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(oldProfile) })
+}
+
+// Check the styled character separately from the surrounding plain viewport:
+// an inserted cursor glyph or highlighting the wrong repeated letter cannot
+// satisfy both the span and text-position assertions.
+func assertRoutineTitleCursor(t *testing.T, a App, inside int) string {
+	t.Helper()
+	input := a.routineUI.title
+	value, pos := []rune(input.Value()), input.Position()
+	cursorText, suffix := " ", ""
+	if pos < len(value) {
+		cursorText, suffix = string(value[pos]), string(value[pos+1:])
+	}
+	span := lipgloss.NewStyle().Foreground(currentTheme().AppTitleFg).Background(colorAccent).Render(cursorText)
+	row := renderRoutineTitle(input, inside, true)
+	if !strings.Contains(span, "\x1b[") || strings.Count(row, span) != 1 {
+		t.Fatalf("position=%d: want exactly one filled cursor span %q in %q", pos, span, row)
+	}
+	parts := strings.Split(row, span)
+	left := strings.TrimPrefix(ansiRe.ReplaceAllString(parts[0], ""), "▸ ")
+	right := strings.TrimRight(ansiRe.ReplaceAllString(parts[1], ""), " ")
+	if !strings.HasSuffix(string(value[:pos]), left) || !strings.HasPrefix(suffix, right) {
+		t.Fatalf("cursor not at rune %d: left=%q cursor=%q right=%q value=%q", pos, left, cursorText, right, input.Value())
+	}
+	plain := ansiRe.ReplaceAllString(row, "")
+	if lipgloss.Width(row) != inside || strings.Contains(plain, "▌") {
+		t.Fatalf("position=%d: invalid title viewport %q (width %d, want %d)", pos, plain, lipgloss.Width(row), inside)
+	}
+	needed := lipgloss.Width(input.Value())
+	if pos == len(value) {
+		needed++ // the end cursor is a blank, not another title character
+	}
+	if needed <= inside-2 && plain != fitToWidth("▸ "+input.Value(), inside) {
+		t.Fatalf("cursor altered plain title: %q, value=%q", plain, input.Value())
+	}
+	if err := requireBackgroundEveryCell(row); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(a.renderRoutineModal(), row) {
+		t.Fatal("modal clipped or replaced the styled title viewport")
+	}
+	if input.Value() != a.routineUI.title.Value() || input.Position() != a.routineUI.title.Position() {
+		t.Fatal("rendering changed input value or insertion position")
+	}
+	return row
+}
+
+func TestRoutineEditorFilledCursorTracksEditing(t *testing.T) {
+	routineCursorTrueColor(t)
+	a := routineFixture(false)
+	a.openRoutineManager()
+	a = routineKey(a, "enter")
+	a.routineUI.title.SetValue("hello")
+	assertCursor := func(wantValue string, wantPos int) {
+		t.Helper()
+		if a.routineUI.title.Value() != wantValue || a.routineUI.title.Position() != wantPos {
+			t.Fatalf("input value=%q position=%d, want %q at %d", a.routineUI.title.Value(), a.routineUI.title.Position(), wantValue, wantPos)
+		}
+		assertRoutineTitleCursor(t, a, a.routineModalWidth()-4)
+	}
+	a = routineKey(a, "home")
+	assertCursor("hello", 0)
+	a = routineKey(a, "right")
+	assertCursor("hello", 1)
+	a = routineKey(a, "right")
+	assertCursor("hello", 2) // highlight the first l; do not insert a cell before it
+	a = routineKey(a, "X")
+	assertCursor("heXllo", 3) // the same original l is still highlighted
+	a = routineKey(a, "left")
+	assertCursor("heXllo", 2)
+	a = routineKey(a, "home")
+	assertCursor("heXllo", 0)
+	a = routineKey(a, "end")
+	assertCursor("heXllo", 6)
+	a = routineKey(a, "tab")
+	row := renderRoutineTitle(a.routineUI.title, a.routineModalWidth()-4, false)
+	cursorStyle := lipgloss.NewStyle().Foreground(currentTheme().AppTitleFg).Background(colorAccent)
+	if a.routineUI.title.Focused() || strings.Contains(row, cursorStyle.Render(" ")) ||
+		ansiRe.ReplaceAllString(row, "") != fitToWidth("  heXllo", a.routineModalWidth()-4) {
+		t.Fatalf("blurred title shows a cursor or altered text: %q", row)
+	}
+	// Both the field focus and the widget focus must permit a cursor.
+	if strings.Contains(renderRoutineTitle(a.routineUI.title, a.routineModalWidth()-4, true), cursorStyle.Render(" ")) {
+		t.Fatal("blurred widget shows a cursor in a selected field")
+	}
+	a = routineKey(a, "shift+tab")
+	assertCursor("heXllo", 6)
+	if strings.Contains(renderRoutineTitle(a.routineUI.title, a.routineModalWidth()-4, false), cursorStyle.Render(" ")) {
+		t.Fatal("unselected field shows a cursor in a focused widget")
+	}
+}
+
+func TestRoutineEditorEmptyTitleHasFilledBlankCursor(t *testing.T) {
+	routineCursorTrueColor(t)
+	a := routineFixture(false)
+	a.openRoutineManager()
+	a = routineKey(a, "a")
+	assertRoutineTitleCursor(t, a, a.routineModalWidth()-4)
+	a = routineKey(a, "界")
+	assertRoutineTitleCursor(t, a, a.routineModalWidth()-4)
+	a = routineKey(a, "home")
+	assertRoutineTitleCursor(t, a, a.routineModalWidth()-4)
+}
+
+func TestRoutineEditorUnicodeCursorAndLongTitleViewport(t *testing.T) {
+	routineCursorTrueColor(t)
+	for _, title := range []string{"茶é猫", strings.Repeat("日", 40), strings.Repeat("ab", 40)} {
+		a := routineFixture(false)
+		a.width, a.height = 32, 16
+		a.openRoutineManager()
+		a = routineKey(a, "enter")
+		a.routineUI.title.SetValue(title)
+		inside := a.routineModalWidth() - 4
+		check := func() {
+			t.Helper()
+			assertRoutineTitleCursor(t, a, inside)
+		}
+		a = routineKey(a, "end")
+		check()
+		for range []rune(title) {
+			a = routineKey(a, "left")
+			check()
+		}
+		a = routineKey(a, "home")
+		check()
+		a = routineKey(a, "right")
+		check()
+		a = routineKey(a, "界")
+		want := string([]rune(title)[:1]) + "界" + string([]rune(title)[1:])
+		if a.routineUI.title.Value() != want {
+			t.Fatalf("Unicode insertion = %q, want %q", a.routineUI.title.Value(), want)
+		}
+		check()
+		for _, width := range []int{12, 50, 16, 32} {
+			m, _ := a.Update(tea.WindowSizeMsg{Width: width, Height: 18})
+			a = m.(App)
+			inside = a.routineModalWidth() - 4
+			check()
+			a = routineKey(a, "end")
+			check()
+			for range []rune(a.routineUI.title.Value()) {
+				a = routineKey(a, "left")
+				check()
+			}
+		}
+	}
+}
+
+func TestRoutineDeleteConfirmationLivesOnlyInModalFooter(t *testing.T) {
+	for _, simple := range []bool{false, true} {
+		a := routineFixture(simple)
+		a.openRoutineManager()
+		before := a.geometry()
+		a = routineKey(a, "d")
+		if a.geometry() != before {
+			t.Fatal("opening routine confirmation changed page geometry")
+		}
+		modal := strings.Split(ansiRe.ReplaceAllString(a.renderRoutineModal(), ""), "\n")
+		footer := strings.Join(modal[len(modal)-4:len(modal)-1], "\n")
+		for _, want := range []string{`Delete "Coffee" and its history?`, "[y/enter] delete", "[any other key] cancel"} {
+			if !strings.Contains(footer, want) {
+				t.Fatalf("missing %q in modal footer:\n%s", want, footer)
+			}
+			if strings.Count(ansiRe.ReplaceAllString(a.View(), ""), want) != 1 {
+				t.Fatalf("confirmation missing or duplicated in frame: %q", want)
+			}
+			if strings.Contains(ansiRe.ReplaceAllString(a.renderPage(), ""), want) {
+				t.Fatalf("routine confirmation leaked to app bottom: %q", want)
+			}
+		}
+		if strings.Contains(footer, "[a]") || strings.Contains(footer, "[esc] close") {
+			t.Fatal("confirmation advertises inactive manager bindings")
+		}
+		cancelled := routineKey(a, "x")
+		if cancelled.mode != modeRoutineManager || len(cancelled.routines) != 2 {
+			t.Fatal("any-other-key cancel hint disagrees with handler")
+		}
+		deleted := routineKey(a, "enter")
+		if deleted.mode != modeRoutineManager || len(deleted.routines) != 1 {
+			t.Fatal("Enter confirmation hint disagrees with handler")
+		}
+	}
+	for _, focus := range []focusedPane{focusToday, focusNotes} {
+		a := routineFixture(false)
+		a.routines = nil
+		a.focus = focus
+		a = routineKey(a, "d")
+		page := ansiRe.ReplaceAllString(a.renderPage(), "")
+		if !strings.Contains(page, "Delete ") || !strings.Contains(page, "[y]") {
+			t.Fatalf("normal task/note confirmation lost its page prompt: %s", page)
+		}
+	}
+	a := routineFixture(false)
+	a.routines[0].Title = strings.Repeat("Long routine title ", 10)
+	a.openRoutineManager()
+	a = routineKey(a, "d")
+	if !strings.Contains(ansiRe.ReplaceAllString(a.renderRoutineModal(), ""), "and its history?") {
+		t.Fatal("long routine title hid the history deletion warning")
+	}
+}
+
+func TestRoutineModalHierarchyAndBackgroundAcrossThemes(t *testing.T) {
+	oldProfile, oldTheme := lipgloss.ColorProfile(), currentTheme()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer func() { lipgloss.SetColorProfile(oldProfile); applyTheme(oldTheme) }()
+	for _, theme := range curatedThemes {
+		applyTheme(theme)
+		for _, size := range [][2]int{{32, 12}, {50, 16}, {80, 24}, {110, 36}} {
+			a := routineFixture(false)
+			a.width, a.height = size[0], size[1]
+			a.routines[0].History = map[string]model.RoutineStatus{a.now().Format(dateFormat): model.RoutineCompleted}
+			a.openRoutineManager()
+			for _, mode := range []mode{modeRoutineManager, modeRoutineEditor, modeConfirmDelete} {
+				b := a
+				if mode == modeRoutineEditor {
+					b = routineKey(b, "enter")
+					b.routineUI.title.SetCursor(2)
+					b.routineUI.schedule = model.ScheduleCustom
+					b.routineUI.days[time.Monday] = true
+				} else if mode == modeConfirmDelete {
+					b = routineKey(b, "d")
+				}
+				modal := b.renderRoutineModal()
+				if lipgloss.Height(modal) != b.routineModalHeight() {
+					t.Fatalf("%s %v mode=%v: modal height mismatch", theme.Name, size, mode)
+				}
+				for _, line := range strings.Split(modal, "\n") {
+					if lipgloss.Width(line) != b.routineModalWidth() {
+						t.Fatalf("%s %v mode=%v: modal width mismatch", theme.Name, size, mode)
+					}
+				}
+				if err := requireBackgroundEveryCell(modal); err != nil {
+					t.Fatalf("%s %v mode=%v: %v", theme.Name, size, mode, err)
+				}
+				if mode == modeRoutineEditor {
+					assertRoutineTitleCursor(t, b, b.routineModalWidth()-4)
+				}
+				// The wider case fits complete values, allowing checks of distinct
+				// foreground roles without relying on exact RGB escape encodings.
+				if size[0] >= 80 {
+					if mode == modeRoutineEditor {
+						text := lipgloss.NewStyle().Foreground(colorText).Background(colorPanel)
+						if !strings.Contains(modal, text.Render("Co")) || !strings.Contains(modal, text.Render("fee")) {
+							t.Fatal("title input does not use the value foreground")
+						}
+						label := lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Background(colorPaneBg)
+						if !strings.Contains(modal, label.Render("Title")) {
+							t.Fatal("editor label does not use the label foreground")
+						}
+					} else if !strings.Contains(modal, lipgloss.NewStyle().Foreground(colorGreen).Background(colorPanel).Render("completed")) {
+						t.Fatal("manager completion status lost its distinct foreground")
+					}
+				}
+			}
+		}
 	}
 }
 

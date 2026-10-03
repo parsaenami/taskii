@@ -1295,3 +1295,59 @@ assertions for the phase row and background filler above the clock/bar.
 Validation: changed Go files were gofmt-formatted; `scripts/verify.sh` (build,
 vet, formatting, and all tests) and `git diff --check` passed. Existing
 uncommitted work was preserved; no commits were created.
+
+## Routine modal hierarchy, local confirmation, and title caret (2026-10-03)
+
+Polished the existing fixed-size routine modal with accent-colored labels,
+text-colored input values/titles, muted schedule metadata, and state-specific
+status colors. Selected rows/fields carry the panel background across every
+independently styled span. The editor border distinguishes New/Edit routine,
+and schedule values use readable labels without changing persisted enums.
+
+Routine-manager deletion now pins its question and `[y/enter] delete` /
+`[any other key] cancel` controls to the modal footer. Long names shorten before
+the history warning; the selected routine stays visible as the footer expands.
+Only routine-manager confirmations are suppressed in the page-level status
+prompt; task/note confirmations retain their existing behavior and page geometry
+is unchanged.
+
+The title editor still delegates editing to Bubbles textinput, but renders a
+plain-rune viewport around its actual Position instead of appending a caret to
+Value. Display-width fitting reserves the caret cell first, including at the
+end of a long or wide-character title. Blurred fields show no caret. Styled
+spans/padding are concatenated directly without re-wrapping ANSI output.
+
+Regression coverage includes visible left/right/Home/End caret movement,
+insertion at the displayed position, Unicode/wide and long-title scrolling,
+resize and blur/refocus, local confirmation placement/uniqueness and matching
+handlers, preservation of task/note prompts, and modal dimensions/background
+coverage across all curated themes and constrained terminal sizes. Focused
+routine UI tests and `scripts/verify.sh` (build, vet, formatting, and the complete
+Go test suite) pass. `git diff --check` is clean. No commit was created.
+
+Integration verification: the orchestrator independently reviewed the final
+diff and ran a live tmux `--mock` session at 100x30. Home/Right moved the visible
+caret to `Mak▌e coffee`, and insertion yielded `MakX▌e coffee`; Esc discarded
+the editor changes. The delete question and controls appeared only at the modal
+bottom; cancel retained the routine, and Enter removed it. The original worktree
+remained clean.
+
+## Routine title cursor: filled character highlight (2026-10-03)
+
+Replaced the inserted `▌` caret in `renderRoutineTitle` with an accent-background
+highlight on the actual rune at the textinput's insertion position, using the
+theme's contrasting `AppTitleFg` foreground. Mid-title rendering preserves the
+plain title exactly; the end and empty input use a highlighted blank. The
+viewport reserves the highlighted rune's display width (two cells for wide
+characters) before fitting surrounding text. Blur hides the cursor, and the
+textinput retains its existing editing and insertion semantics.
+
+Replaced glyph-based regressions with truecolor styled-span and plain-text
+assertions. Coverage includes `hello` at position 2 highlighting the first `l`,
+inserting `X` to obtain `heXllo` with that same `l` highlighted at position 3,
+Home/End and arrow movement, empty/end blanks, blur/refocus, Unicode insertion,
+long-title scrolling, constrained widths, and resize. The existing per-cell
+background and all-curated-theme modal checks now verify the filled cursor too.
+Focused UI tests and `scripts/verify.sh` (build, vet, formatting, and all Go
+tests) pass; `git diff --check` is clean. Existing uncommitted work was preserved,
+and no commit was created.

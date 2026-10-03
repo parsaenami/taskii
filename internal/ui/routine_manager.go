@@ -322,6 +322,98 @@ func routineEditorHints() []string {
 	}
 }
 
+func routineScheduleLabel(schedule model.RoutineSchedule) string {
+	switch schedule {
+	case model.ScheduleEveryDay:
+		return "Every day"
+	case model.ScheduleWorkdays:
+		return "Workdays"
+	default:
+		return "Custom days"
+	}
+}
+
+// The textinput owns editing and rune positions. Draw its viewport ourselves:
+// the widget's padding/cursor branches have different widths, and re-wrapping
+// their ANSI output can leave background gaps. Highlight the rune at Position
+// (a blank at the end), reserving its display width before fitting either side.
+func renderRoutineTitle(input textinput.Model, width int, focused bool) string {
+	bg := colorPaneBg
+	marker := "  "
+	if focused {
+		bg, marker = colorPanel, "▸ "
+	}
+	valueStyle := lipgloss.NewStyle().Foreground(colorText).Background(bg)
+	accent := lipgloss.NewStyle().Foreground(colorAccent).Background(bg)
+	available := max(0, width-2)
+	line := accent.Render(marker)
+	if !focused || !input.Focused() {
+		line += valueStyle.Render(fitToWidth(input.Value(), available))
+	} else if available > 0 {
+		value := []rune(input.Value())
+		position := max(0, min(input.Position(), len(value)))
+		cursorText := " "
+		end := position
+		if position < len(value) {
+			cursorText = string(value[position])
+			end++
+		}
+		cursorWidth := max(1, lipgloss.Width(cursorText))
+		start := 0
+		for start < position && lipgloss.Width(string(value[start:position])) > available-cursorWidth {
+			start++
+		}
+		left := string(value[start:position])
+		rightStart := end
+		for end < len(value) && lipgloss.Width(left+cursorText+string(value[rightStart:end+1])) <= available {
+			end++
+		}
+		cursorStyle := lipgloss.NewStyle().Foreground(currentTheme().AppTitleFg).Background(colorAccent)
+		line += valueStyle.Render(left) + cursorStyle.Render(cursorText) + valueStyle.Render(string(value[rightStart:end]))
+	}
+	return padPanelLine(line, width, bg)
+}
+
+func renderRoutineManagerRow(r model.Routine, state string, selected bool, width int) string {
+	bg, marker := colorPaneBg, "  "
+	if selected {
+		bg, marker = colorPanel, "▸ "
+	}
+	text := lipgloss.NewStyle().Foreground(colorText).Background(bg).Bold(selected)
+	muted := lipgloss.NewStyle().Foreground(colorMuted).Background(bg)
+	statusColor := colorMuted
+	switch state {
+	case "pending":
+		statusColor = colorAccent
+	case string(model.RoutineCompleted):
+		statusColor = colorGreen
+	case string(model.RoutineSkipped):
+		statusColor = colorWarning
+	case string(model.RoutineMissed):
+		statusColor = colorDanger
+	}
+	status := lipgloss.NewStyle().Foreground(statusColor).Background(bg)
+	accent := lipgloss.NewStyle().Foreground(colorAccent).Background(bg)
+	schedule := routineScheduleLabel(r.Schedule)
+	suffixWidth := lipgloss.Width(" · " + state + " · " + schedule)
+	// Keep a useful title in narrow modals; schedule is secondary metadata.
+	if width-2-suffixWidth < 8 {
+		schedule = ""
+		suffixWidth = lipgloss.Width(" · " + state)
+	}
+	if width-2-suffixWidth < 4 {
+		state, schedule, suffixWidth = "", "", 0
+	}
+	line := accent.Render(marker) + text.Render(fitToWidth(r.Title, max(0, width-2-suffixWidth)))
+	if state != "" {
+		line += muted.Render(" · ") + status.Render(state)
+	}
+	if schedule != "" {
+		line += muted.Render(" · " + schedule)
+	}
+	return padPanelLine(line, width, bg)
+}
+
 // pinRoutineModalFooter pads the content before appending the key hints, so
 // list length and editor schedule never move the controls away from the
 // modal's bottom edge. Every row is also fitted to the pane surface here.
@@ -344,25 +436,26 @@ func (a App) renderRoutineModal() string {
 	w, h := a.routineModalWidth(), a.routineModalHeight()
 	inside := max(1, w-4)
 	capacity := max(1, h-2)
-	label := lipgloss.NewStyle().Foreground(colorMuted).Background(colorPaneBg)
-	selected := lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Background(colorPanel)
+	label := lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Background(colorPaneBg)
+	muted := lipgloss.NewStyle().Foreground(colorMuted).Background(colorPaneBg)
+	danger := lipgloss.NewStyle().Foreground(colorDanger).Background(colorPaneBg)
+	modalTitle := "Routines"
 	var lines []string
 	add := func(s string) { lines = append(lines, padPanelLine(s, inside, colorPaneBg)) }
 	if a.mode == modeRoutineEditor {
 		m := a.routineUI
+		modalTitle = "New routine"
+		if m.editID != "" {
+			modalTitle = "Edit routine"
+		}
 		add(label.Render("Title"))
-		title := m.title.Value()
-		if m.field == 0 {
-			title = "▸ " + title + "▌"
-		} else {
-			title = "  " + title
-		}
-		add(label.Render(fitToWidth(title, inside)))
-		style := label
+		add(renderRoutineTitle(m.title, inside, m.field == 0))
+		bg, marker := colorPaneBg, "  "
 		if m.field == 1 {
-			style = selected
+			bg, marker = colorPanel, "▸ "
 		}
-		add(style.Render(fitToWidth(fmt.Sprintf("Schedule: ◂ %s ▸", m.schedule), inside)))
+		value := lipgloss.NewStyle().Foreground(colorText).Background(bg)
+		add(padPanelLine(label.Background(bg).Render(marker+"Schedule: ")+value.Render("◂ "+routineScheduleLabel(m.schedule)+" ▸"), inside, bg))
 		if m.schedule == model.ScheduleCustom {
 			for n := 0; n < 7; n++ {
 				day := time.Weekday((int(a.weekStart) + n) % 7)
@@ -370,31 +463,50 @@ func (a App) renderRoutineModal() string {
 				if m.days[day] {
 					mark = "[x]"
 				}
-				st := label
+				bg, marker := colorPaneBg, "  "
 				if m.field == n+2 {
-					st = selected
+					bg, marker = colorPanel, "▸ "
 				}
-				add(st.Render(fitToWidth(mark+" "+day.String(), inside)))
+				markStyle := muted.Background(bg)
+				if m.days[day] {
+					markStyle = markStyle.Foreground(colorGreen)
+				}
+				add(padPanelLine(label.Background(bg).Render(marker)+markStyle.Render(mark)+
+					value.Background(bg).Render(" "+day.String()), inside, bg))
 			}
 		}
 		if m.errorText != "" {
-			add(lipgloss.NewStyle().Foreground(colorDanger).Background(colorPaneBg).Render(fitToWidth(m.errorText, inside)))
+			add(danger.Render(fitToWidth(m.errorText, inside)))
 		}
 		lines = pinRoutineModalFooter(lines, routineEditorHints(), inside, capacity)
 	} else {
+		footer := routineManagerHints()
 		if a.mode == modeConfirmDelete && a.deleteReturn == modeRoutineManager {
-			// The status line owns the one confirmation prompt and its hints.
-			// Keep the manager list visible, but never ask the same question twice.
-			add(label.Render(fitToWidth("Confirm below to remove this routine and its history", inside)))
+			// Shorten the name before the warning, so a long title cannot hide
+			// that the routine's history is deleted too.
+			nameWidth := inside - lipgloss.Width(`Delete "" and its history?`)
+			question := "Delete routine + history?"
+			if nameWidth >= 3 {
+				name := strings.TrimRight(fitToWidth(a.managerSelectedTitle(), nameWidth), " ")
+				question = fmt.Sprintf("Delete %q and its history?", name)
+			}
+			footer = []string{
+				danger.Bold(true).Render(fitToWidth(question, inside)),
+				routineModalHintLine(helpKey{"y/enter", "delete"}),
+				routineModalHintLine(helpKey{"any other key", "cancel"}),
+			}
 		}
 		if len(a.routines) == 0 {
-			add(label.Render("No routines yet"))
+			add(muted.Render("No routines yet"))
 		}
-		viewport := a.routineManagerVisibleRows()
-		if a.routineUI.errorText == "" {
-			viewport++
+		viewport := max(1, capacity-len(footer)-1)
+		if a.routineUI.errorText != "" {
+			viewport = max(1, viewport-1)
 		}
 		start := max(0, min(a.routineUI.scroll, len(a.routines)-1))
+		if a.routineUI.selected >= start+viewport {
+			start = a.routineUI.selected - viewport + 1
+		}
 		for i := start; i < min(len(a.routines), start+viewport); i++ {
 			r := a.routines[i]
 			state := "not scheduled"
@@ -404,25 +516,15 @@ func (a App) renderRoutineModal() string {
 					state = string(s)
 				}
 			}
-			st := label
-			marker := "  "
-			if i == a.routineUI.selected {
-				st = selected
-				marker = "▸ "
-			}
-			add(st.Render(fitToWidth(marker+r.Title+" · "+state+" · "+string(r.Schedule), inside)))
+			add(renderRoutineManagerRow(r, state, i == a.routineUI.selected, inside))
 		}
 		if a.routineUI.errorText != "" {
-			add(lipgloss.NewStyle().Foreground(colorDanger).Background(colorPaneBg).Render(fitToWidth(a.routineUI.errorText, inside)))
+			add(danger.Render(fitToWidth(a.routineUI.errorText, inside)))
 		}
-		if a.mode == modeConfirmDelete && a.deleteReturn == modeRoutineManager {
-			lines = pinRoutineModalFooter(lines, nil, inside, capacity)
-		} else {
-			lines = pinRoutineModalFooter(lines, routineManagerHints(), inside, capacity)
-		}
+		lines = pinRoutineModalFooter(lines, footer, inside, capacity)
 	}
 	if len(lines) > capacity {
 		lines = lines[:capacity]
 	}
-	return renderPane("Routines", strings.Join(lines, "\n"), true, w, h)
+	return renderPane(modalTitle, strings.Join(lines, "\n"), true, w, h)
 }
