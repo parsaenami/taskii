@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -250,6 +251,15 @@ func NewApp(opts Options) App {
 	ta.ShowLineNumbers = false
 	// No CharLimit: notes are explicitly unbounded in length.
 	ta.CharLimit = 0
+	ta.MaxWidth = 0
+	ta.MaxHeight = 0
+	// The surrounding editor supplies the border and colors. Keep the widget
+	// unstyled except for its native reverse-video caret marker.
+	ta.Prompt = ""
+	ta.FocusedStyle = textarea.Style{}
+	ta.BlurredStyle = textarea.Style{}
+	ta.Cursor.Style = lipgloss.NewStyle()
+	ta.Cursor.SetMode(cursor.CursorStatic)
 	// The textarea binds enter to "insert newline" by default; here enter
 	// SAVES and shift/alt+enter inserts the newline, so that binding is
 	// cleared and handled in updateNoteEditing instead.
@@ -308,6 +318,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
+		if a.mode == modeNoteEditing {
+			a.syncNoteInputGeometry()
+		}
 		a.clampSelections()
 		return a, nil
 
@@ -363,6 +376,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.updateNormal(msg)
 	}
 
+	if a.mode == modeNoteEditing && !a.shortcutsOpen {
+		var cmd tea.Cmd
+		a.noteInput, cmd = a.noteInput.Update(msg)
+		a.refreshNoteInputViewport()
+		return a, cmd
+	}
 	return a, nil
 }
 
@@ -913,14 +932,6 @@ func confirmHint() string {
 		helpKeyStyle.Render("[any other key]") + helpLabelStyle.Render(" cancel")
 }
 
-// noteEditorHeight is how many rows the inline note editor occupies. Kept
-// small so the board stays visible while typing; the textarea scrolls
-// internally for longer notes.
-func (a App) noteEditorHeight() int {
-	const h = 3
-	return h
-}
-
 // renderNotesPane draws the Notes board, including the inline editor when one
 // is open. Returns "" when the layout gave Notes no room, so callers can omit
 // it entirely rather than render a zero-height box.
@@ -938,78 +949,14 @@ func (a App) renderNotesPane(g geometry) string {
 		a.mode == modeNoteEditing, contentWidth)
 
 	if a.mode == modeNoteEditing {
-		body += "\n" + a.renderNoteEditor(contentWidth)
+		// Yield board rows to the editor on cramped panes, rather than letting
+		// renderPane truncate the caret or the editor's bottom border.
+		boardRows := g.notesHeight - 2 - a.noteEditorHeight()
+		body = joinNoteEditor(body, boardRows, a.renderNoteEditor(contentWidth))
 	}
 
 	title := fmt.Sprintf("Notes (%d)", len(a.notes))
 	return renderPane(title, body, a.focus == focusNotes, g.notesWidth, g.notesHeight)
-}
-
-// renderNoteEditor draws the multi-line note editor at the given width,
-// returning exactly noteEditorHeight() lines. Shared by the Notes pane and
-// simple mode.
-//
-// The widget's own styles go through Inline(true), which strips backgrounds,
-// and it pads its lines with unstyled spaces — so its output can't be made to
-// carry a background from the outside by styling alone. Strip the ANSI it
-// produced and re-render each line as background-carrying spans instead. The
-// editor is plain text (no per-token colors to preserve), so nothing is lost.
-func (a App) renderNoteEditor(width int) string {
-	bg := colorPaneBg
-	if a.simple {
-		// Simple mode has no panes, so the editor sits on the page surface.
-		bg = colorBg
-	}
-
-	// Value receiver: these only affect the frame being rendered. Set here
-	// rather than at construction so they follow theme changes.
-	a.noteInput.SetWidth(width)
-	a.noteInput.SetHeight(a.noteEditorHeight())
-	a.noteInput.FocusedStyle.Base = lipgloss.NewStyle().Background(bg)
-	a.noteInput.FocusedStyle.Text = lipgloss.NewStyle().Foreground(colorText).Background(bg)
-	a.noteInput.FocusedStyle.Placeholder = lipgloss.NewStyle().Foreground(colorMuted).Background(bg)
-	a.noteInput.FocusedStyle.CursorLine = lipgloss.NewStyle().Background(bg)
-	a.noteInput.FocusedStyle.Prompt = lipgloss.NewStyle().Foreground(colorAccent).Background(bg)
-
-	editStyle := lipgloss.NewStyle().Foreground(colorText).Background(bg)
-	promptStyle := lipgloss.NewStyle().Foreground(colorAccent).Background(bg)
-	cursorStyle := lipgloss.NewStyle().Foreground(bg).Background(colorAccent)
-
-	// Stripping the widget's ANSI also removes the cursor's inverse video, so
-	// the caret is drawn from the model's own row/column instead.
-	curRow, curCol := a.noteInput.Line(), a.noteInput.LineInfo().ColumnOffset
-
-	var out []string
-	for row, l := range strings.Split(a.noteInput.View(), "\n") {
-		plain := strings.TrimRight(ansiRe.ReplaceAllString(l, ""), " ")
-		rest, hasPrompt := strings.CutPrefix(plain, a.noteInput.Prompt)
-		if !hasPrompt {
-			rest = plain
-		}
-
-		var text string
-		if row == curRow {
-			r := []rune(rest)
-			for len(r) <= curCol {
-				r = append(r, ' ')
-			}
-			text = editStyle.Render(string(r[:curCol])) +
-				cursorStyle.Render(string(r[curCol])) +
-				editStyle.Render(string(r[curCol+1:]))
-		} else {
-			text = editStyle.Render(rest)
-		}
-
-		line := text
-		if hasPrompt {
-			line = promptStyle.Render(a.noteInput.Prompt) + text
-		}
-		if pad := width - lipgloss.Width(line); pad > 0 {
-			line += lipgloss.NewStyle().Background(bg).Render(strings.Repeat(" ", pad))
-		}
-		out = append(out, line)
-	}
-	return strings.Join(out, "\n")
 }
 
 // startNoteEdit opens the note editor. index -1 adds a new note, otherwise
@@ -1017,6 +964,7 @@ func (a App) renderNoteEditor(width int) string {
 func (a App) startNoteEdit(index int) (tea.Model, tea.Cmd) {
 	a.mode = modeNoteEditing
 	a.noteEditIndex = index
+	a.syncNoteInputGeometry()
 	if index >= 0 && index < len(a.notes) {
 		a.noteInput.SetValue(a.notes[index].Body)
 	} else {
@@ -1024,7 +972,8 @@ func (a App) startNoteEdit(index int) (tea.Model, tea.Cmd) {
 	}
 	a.noteInput.Focus()
 	a.noteInput.CursorEnd()
-	return a, textarea.Blink
+	a.refreshNoteInputViewport()
+	return a, nil
 }
 
 // updateNoteEditing handles the multi-line note editor. Enter saves;
@@ -1033,6 +982,7 @@ func (a App) startNoteEdit(index int) (tea.Model, tea.Cmd) {
 // shift+enter (they're indistinguishable without kitty-protocol or similar
 // support), so alt+enter is bound alongside it as a portable fallback.
 func (a App) updateNoteEditing(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	a.syncNoteInputGeometry()
 	switch msg.String() {
 	case "esc":
 		a.mode = modeNormal
@@ -1058,6 +1008,7 @@ func (a App) updateNoteEditing(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	//               than no hint.
 	case "shift+enter", "alt+enter", "ctrl+j", "ctrl+n":
 		a.noteInput.InsertString("\n")
+		a.refreshNoteInputViewport()
 		return a, nil
 
 	case "enter":
@@ -1078,6 +1029,7 @@ func (a App) updateNoteEditing(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	a.noteInput, cmd = a.noteInput.Update(msg)
+	a.refreshNoteInputViewport()
 	return a, cmd
 }
 

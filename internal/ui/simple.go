@@ -376,7 +376,7 @@ func (a App) renderSimple() string {
 		list += "\n" + line
 	}
 	if a.mode == modeNoteEditing {
-		list += "\n" + a.renderNoteEditor(lw)
+		list = joinNoteEditor(list, bodyHeight-a.noteEditorHeight(), a.renderNoteEditor(lw))
 	}
 
 	greet := renderSimpleGreeting(a.now(), a.username, gw)
