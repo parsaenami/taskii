@@ -1351,3 +1351,54 @@ background and all-curated-theme modal checks now verify the filled cursor too.
 Focused UI tests and `scripts/verify.sh` (build, vet, formatting, and all Go
 tests) pass; `git diff --check` is clean. Existing uncommitted work was preserved,
 and no commit was created.
+
+## Notes editor caret and input border (2026-10-03)
+
+Fixed the misplaced caret in normal, expanded, and simple-mode Notes editing.
+The old renderer stripped the textarea's cursor ANSI and rebuilt it using
+logical `Line()` / `LineInfo().ColumnOffset` against viewport rows and rune
+indices. That loses the actual position after soft wrapping or scrolling and
+does not measure Unicode display cells correctly. Width/height changes were
+also confined to the View copy, so navigation used stale widget geometry.
+
+The shared renderer now preserves the textarea's native reverse-video caret
+marker in its rendered viewport, then rebuilds plain-text spans with the
+current themed foreground/background. Marked combining sequences and emoji
+graphemes are styled whole rather than split by ANSI resets. The caret remains
+static, matching the old always-visible custom caret. No pre-styled widget
+output is re-wrapped in a Lip Gloss style.
+
+Added a hand-built rounded input border with explicitly filled border, text,
+caret, and padding cells. The usual budget is five rows (three editable plus
+two border rows); cramped Notes panes yield board rows first and shrink to
+one editable row while retaining both border edges. Simple mode uses the page
+background, while normal/expanded Notes use the pane background. The width
+and height reservations include the border and are committed on opening,
+before editing/navigation, and on terminal resize.
+
+Source inspection also confirmed that textarea setters/insertion do not
+reposition its viewport, and scrolling is clamped against content last populated
+by View. The integration refreshes wrapped viewport content before a no-input
+Update repositions it, including after newlines and long insertions; this fixes
+blank simple-mode editor rows without requiring a terminal resize. Non-key
+widget messages (including clipboard results) now reach the active note editor.
+
+Regression tests cover the reported two-line/newline sequence, four-line
+scrolling with Up/Home and insertion, long wrapped notes in all three modes,
+resize, wide CJK/emoji and combining-mark navigation, and initial placement,
+navigation/insertion, and atomic save/load of an existing wrapped multiline
+note. All persistence tests use isolated temporary XDG homes. A sweep across
+all curated themes, all four layouts, the three editor modes, and representative
+70x24 / 100x30 / 160x45 sizes checks exact frame/editor dimensions, complete
+border/caret visibility, filled cell backgrounds, and the batch-add reset.
+`scripts/verify.sh` (build, vet, formatting, and all tests) and
+`git diff --check` pass. No commits were created.
+
+Independent review and live tmux acceptance checks also passed: normal-mode
+newlines at 120x40, expanded Notes with scrolled Up/Home followed by insertion,
+simple-mode long wrapping, and resize to 80x24 all show complete bordered
+editors. An accent-cursor SGR scan confirmed the highlighted blank on the new
+third line and the highlighted `t` at the expected scrolled/wrapped insertion
+point before and after resize; the baseline instead highlighted an incorrect
+`f` or blank. Promoted `github.com/rivo/uniseg v0.4.7` to a direct dependency
+because the new renderer imports it, with no unrelated module changes.
