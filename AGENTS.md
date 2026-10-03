@@ -1402,3 +1402,17 @@ third line and the highlighted `t` at the expected scrolled/wrapped insertion
 point before and after resize; the baseline instead highlighted an incorrect
 `f` or blank. Promoted `github.com/rivo/uniseg v0.4.7` to a direct dependency
 because the new renderer imports it, with no unrelated module changes.
+
+## Feature worktree integration (2026-10-03)
+
+Committed and merged sketch layouts, routine-modal polish, and Notes-input cursor
+work into main in that order. Both merge conflicts were append-only AGENTS.md
+sections; all contributions were retained, and app.go merged automatically.
+Expanded the Notes editor border/caret/frame regression sweep to `allLayouts`,
+covering the two newly added arrangements alongside normal, expanded, and simple
+editing modes. No implementation integration failures were found.
+
+Validation: `scripts/verify.sh` (build, vet, formatting, and all tests) and
+`git diff --check` pass after integration. The existing untracked screenshot
+was left untouched. Push, tagging, and worktree/branch cleanup are deferred to
+the parent session.

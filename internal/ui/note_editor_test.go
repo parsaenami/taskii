@@ -185,7 +185,7 @@ func TestNoteEditorExistingMultilineNote(t *testing.T) {
 
 func TestNoteEditorBordersAndFrameGeometry(t *testing.T) {
 	for _, theme := range themes {
-		for _, lay := range []layout{layoutTasksLeft, layoutTasksRight, layoutStacked, layoutThreeColumn} {
+		for _, lay := range allLayouts {
 			for _, mode := range []string{"pane", "expanded", "simple"} {
 				for _, size := range [][2]int{{70, 24}, {100, 30}, {160, 45}} {
 					t.Run(fmt.Sprintf("%s/%d/%s/%dx%d", theme.Name, lay, mode, size[0], size[1]), func(t *testing.T) {
