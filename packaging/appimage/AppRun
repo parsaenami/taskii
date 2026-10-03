@@ -1,0 +1,4 @@
+#!/bin/sh
+# Keep the caller's working directory and pass every CLI argument unchanged.
+appdir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec "$appdir/usr/bin/taskii" "$@"

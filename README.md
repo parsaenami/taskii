@@ -32,6 +32,26 @@ curl -fsSL https://raw.githubusercontent.com/parsaenami/taskii/main/install.sh |
 
 **Download a binary** from the [releases page](https://github.com/parsaenami/taskii/releases) (macOS, Linux, Windows — amd64/arm64), then put it on your `PATH`.
 
+**AppImage** (Linux): download `taskii-linux-amd64.AppImage` for x86-64 or
+`taskii-linux-arm64.AppImage` for ARM64 from the releases page. Make it executable
+and run it from your terminal:
+
+```bash
+chmod +x taskii-linux-amd64.AppImage
+./taskii-linux-amd64.AppImage
+# All taskii flags work, for example:
+./taskii-linux-amd64.AppImage --simple
+```
+
+Use the `arm64` filename instead on ARM64. If FUSE is unavailable, run with
+`--appimage-extract-and-run` before the taskii flags. AppImages use the same XDG
+data and settings locations as other installations; the executable is portable,
+but your data stays in your user directories.
+
+Each AppImage includes update information and has a matching `.AppImage.zsync`
+release asset for tools such as AppImageUpdate. Updating is handled by your
+AppImage update tool; taskii's built-in update check only notifies you.
+
 **Or build from source** (requires [Go](https://go.dev) 1.26+):
 
 ```bash

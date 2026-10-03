@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=taskii
+Comment=Terminal task manager, notes and Pomodoro dashboard
+Exec=taskii
+Icon=taskii
+Terminal=true
+Categories=Office;
+Keywords=tasks;todo;notes;pomodoro;
