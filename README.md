@@ -206,7 +206,7 @@ included.
 - **Pomodoro timer** — start, pause, reset, and skip work/break phases.
 - **Reports** — task completion with 7-day/monthly bars and a contribution heatmap, plus a configurable-week routine matrix and follow-through summary.
 - **Themes** — 7 curated core themes, 340+ searchable terminal themes, and extensible custom JSON/JSONL theme support, all available from Settings (`S`).
-- **Layouts** — multiple pane arrangements selected and previewed from Settings (`S`).
+- **Layouts** — six pane arrangements selected and previewed from Settings (`S`), named Layout 1 through Layout 6. Layouts 1 and 2 mirror the task and info columns; Layout 3 stacks info above tasks and notes; Layout 4 uses three columns. Layout 5 places a horizontal greeting and a wide block-countdown Pomodoro above Reports/Today and Notes/Overdue, with a 2/5 left column and 3/5 right column. Layout 6 puts a full-width greeting above Reports/Pomodoro, Today/Overdue, and a full-height Notes column. Preferences saved under the previous layout names are restored automatically.
 - **Update checks** — optional daily GitHub Release checks with an in-app version upgrade suggestion, configured from Settings > Updates.
 
 ## Custom Themes

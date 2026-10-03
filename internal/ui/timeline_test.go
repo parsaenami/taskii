@@ -248,7 +248,7 @@ func TestTimelineRowsCarryBackgroundOnEveryCell(t *testing.T) {
 }
 
 func TestTimelineFullPageLayoutsTickAndSimpleIsolation(t *testing.T) {
-	for _, layout := range []layout{layoutTasksLeft, layoutTasksRight, layoutStacked, layoutThreeColumn} {
+	for _, layout := range allLayouts {
 		for _, size := range [][2]int{{70, 24}, {100, 30}, {160, 45}} {
 			t.Run(fmt.Sprintf("%s/%dx%d", layout, size[0], size[1]), func(t *testing.T) {
 				a := timelineTestApp()

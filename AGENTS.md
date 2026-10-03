@@ -1147,3 +1147,151 @@ the existing row instead of reducing the rail height and remapping every time
 and event by one terminal line. Timeline scroll capacity uses the same reserved
 budget in both modes. A regression test pins viewport size plus the rendered NOW
 and event rows before and after opening the input.
+
+## Sketch layouts: Dashboard Grid and Header Columns (2026-10-03)
+
+Appended two layouts to the existing Settings layout list, preserving the four
+original names/order and simple mode. Both choices use the existing live-preview,
+cancel, explicit-selection, and whole-settings persistence paths; their stable
+saved names are **Dashboard Grid** and **Header Columns**.
+
+- Dashboard Grid uses a borderless horizontal greeting beside a compact
+  Pomodoro, then aligned Reports/Today and Notes/Overdue rows in two nearly equal
+  columns. The compact timer shares the phase/countdown/session state and pinned
+  controls with the full renderer; it uses plain MM:SS rather than block digits.
+- Header Columns uses a full-width borderless greeting, with the approved logo
+  at the left and greeting/date/version right-aligned at the far edge. Below it,
+  Reports/Pomodoro, Today/Overdue, and full-height Notes occupy 1/4:2/4:1/4 columns.
+  The existing block countdown remains, with a compact fallback when the lower
+  pane cannot fit its eight-row minimum.
+- Geometry owns header dimensions and horizontal row-gap budgets as well as the
+  pane sizes. At ordinary heights the sketches retain balanced rows and one-line
+  page-background gaps. Short screens yield header margins/context and, in the
+  grid, row gaps before sacrificing Today's eight-row task-input budget or Notes'
+  seven-row three-line-editor budget. Those minima are reserved independently of
+  editing mode, avoiding editor-triggered layout jumps.
+- The new header fits plain text before styling, falls back to plain TASKII when
+  the wordmark and metadata cannot fit side by side, and explicitly paints every
+  padding cell with the page background. The original bordered greeting renderer
+  is unchanged, and both new headers retain the full approved wordmark at 160x45.
+
+Regression coverage checks the sketches' rendered pane positions, Settings
+preview/cancel/selection and complete-preference persistence/restart, task and
+wrapped-note scrolling through resize, all three note-editor lines at 70x24 and
+160x24, visible typed Today input with due routines at those same sizes, Timeline's
+fixed input reservation, expanded Notes, and modal composition. Frame checks span
+all seven curated themes, both new layouts, representative sizes and modes,
+asserting exact page dimensions and background coverage. Timeline/Upcoming's old
+hardcoded layout sweeps now use `allLayouts`.
+
+The odd-width shortcuts-overlay sweep exposed a real existing compositing bug:
+an overlay edge bisecting a wide glyph dropped or overran a display cell.
+`ansiSlice` now fills a partially intersected glyph with styled spaces; a focused
+regression covers both slice edges. No other overlay behavior was changed.
+
+Verification: `go test ./internal/ui -count=1` passes, including the expanded
+existing UI sweeps and the new regressions. Changed Go files are gofmt-formatted;
+`gofmt -l internal/ui` and `git diff --check` are clean. README briefly lists the
+two additions. The parent session completed independent source review, full
+repository verification, and live tmux review; no commits were created.
+
+Final integration validation: `scripts/verify.sh` and `git diff --check` both
+passed. Live tmux captures confirmed both layouts' pane arrangements at 160x45
+and the compact Dashboard Grid at 100x30. At 70x24, Dashboard Grid keeps typed
+Today input visible alongside due routines and all three Notes editor lines
+visible. At 160x24, Header Columns retains the phase, block countdown, session
+summary, and pinned [p]/[r]/[n] controls. Timeline input and the running compact
+countdown were also verified live in Dashboard Grid at 160x45.
+
+## Sketch layout follow-up: numbered names, inset headers, horizontal timer (2026-10-03)
+
+All six current layout display/persistence names are now **Layout 1** through
+**Layout 6**, in the original order. `layoutByName` also accepts every previous
+name, so existing saved preferences restore the same arrangement; subsequent
+saves use the numbered name. Settings previews, selection status, and README
+use the numbered names. Historical entries above retain their original names.
+
+Both borderless greeting headers now reserve one page-background cell on each
+side before fitting the logo/metadata and explicitly paint those margins on
+every row, including blanks. Layout 6's right-aligned metadata ends one cell
+before the header edge. The original bordered greeting is unchanged.
+
+Layout 5 now allocates 2/5 of the width remaining after its one-cell gutter to
+the left greeting/Reports/Notes column, with the integer remainder going to the
+right Pomodoro/Today/Overdue column. Its dedicated horizontal Pomodoro renderer
+uses the approved three-row block countdown at the left, a middle-row progress
+bar immediately to its right, and a three-row phase/run-pip, session/break, and
+control block at the right. Every span and padding cell has an explicit pane
+background; already-styled content is concatenated without re-rendering it.
+
+At narrower widths the context abbreviates before the progress bar yields to a
+two-column clock/context arrangement. The three-row clock, phase/session
+context, and all `[p]`/`[r]`/`[n]` controls survive at 70x24; the horizontal bar
+survives at 100, 160, and 220 columns. Layout 5's header minimum is now five
+outer rows, allowing three content rows even on short screens. The existing
+gap-yielding ladder preserves Today's input and Notes' three-line editor
+without changing geometry on entering either editor. The full vertical timer
+and Layout 6's short-pane compact fallback retain their prior behavior.
+
+Regression coverage checks all numbered Settings rows and legacy saved-name
+restore/canonical-save behavior, odd-width column ratios and rendered positions,
+header margins/Unicode fitting/right metadata inset, horizontal clock/bar/context
+placement, running-tick refresh, reset/skip/session state, and configured
+three-digit minute counts. Existing resize/editor/scroll/modal checks continue
+to pass; the frame/background sweep now includes 100x24 and 220x45 across all
+seven curated themes and both sketch layouts. The first targeted test run caught
+an incorrect new assertion that reset retains run state; corrected it to the
+existing pause-on-reset behavior without changing implementation semantics.
+
+Validation: changed Go files were gofmt-formatted; `go test ./internal/ui
+-count=1`, full `scripts/verify.sh`, and `git diff --check` passed. Prior
+uncommitted layout work was preserved; no commits were created.
+
+Parent live tmux review completed: Layout 5 at 160x45 shows the big clock left,
+progress bar middle, and context right, with the full approved banner, one-cell
+header margins, and 2:3 columns. At 100x24 the big digits and bar remain with
+concise context; at 70x24 the bar yields while the big digits, phase, session
+count, and all `[p]`/`[r]`/`[n]` controls remain visible. The running Pomodoro
+countdown was verified ticking live. Layout 6 at 160x45 retains the standard
+vertical Pomodoro, with both greeting header margins verified.
+
+## Layout 5: horizontal timer top padding (2026-10-03)
+
+The horizontal Pomodoro now places an odd spare padding row above its aligned
+clock/bar/context block for visual vertical centering. A four-row content budget
+has one blank background row above the three-row block; a three-row budget stays
+intact. Updated the existing horizontal-renderer test's offset and blank-row
+assertion.
+
+Validation: gofmt applied to both changed Go files; `scripts/verify.sh` (build,
+vet, formatting, and all tests) and `git diff --check` both passed.
+
+## Layout 5: spacer before horizontal Pomodoro controls (2026-10-03)
+
+The horizontal timer's context now has four rows: phase, session/break summary,
+a blank spacer, and controls. The fourth row paints blank clock/bar columns
+explicitly. Layout 5's desired header height is seven outer rows, preserving
+the previous blank top row above the four-row block at ordinary screen sizes.
+Its adaptive five-row minimum and gap-yielding budgets remain in place; at a
+three-row content budget, phase and session count share the first context row,
+followed by the spacer and all three controls. Compact break labels distinguish
+the next break from the current break; countdown and session behavior are unchanged.
+
+Updated the existing horizontal-renderer assertions for the four-row context,
+the compact summary, the right-side spacer, and the five-row top padding.
+Validation: changed Go files were gofmt-formatted; `scripts/verify.sh` (build,
+vet, formatting, and all tests) and `git diff --check` passed. Existing
+uncommitted work was preserved; no commits were created.
+
+## Layout 5: phase line raised into top padding (2026-10-03)
+
+Raised the horizontal Pomodoro's phase/run-pip line by one row when top padding
+is available, retaining its right-context column and painting its former row
+with pane-background filler. Countdown, progress bar, session summary, blank
+spacer, and controls keep their positions; constrained headers without top
+padding retain the existing arrangement. Updated the existing horizontal-timer
+assertions for the phase row and background filler above the clock/bar.
+
+Validation: changed Go files were gofmt-formatted; `scripts/verify.sh` (build,
+vet, formatting, and all tests) and `git diff --check` passed. Existing
+uncommitted work was preserved; no commits were created.
